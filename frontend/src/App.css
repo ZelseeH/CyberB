@@ -223,7 +223,8 @@ body {
 
 .change-password h2,
 .password-settings h2,
-.user-management h2 {
+.user-management h2,
+.user-profile h2 {
     color: #333;
     margin-bottom: 20px;
 }
@@ -465,6 +466,10 @@ body {
     background: #6c757d;
 }
 
+.reset-password-btn {
+    background: #17a2b8;
+}
+
 .edit-btn:hover,
 .block-btn:hover,
 .unblock-btn:hover,
@@ -501,11 +506,43 @@ body {
     color: #333;
 }
 
-.reset-password-btn {
-    background: #17a2b8;
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
 }
 
+.modal-close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
+.modal-close-btn:hover {
+    color: #333;
+}
+
+.modal-warning {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 5px;
+    padding: 15px;
+    margin-bottom: 20px;
+}
+
+.modal-warning p {
+    margin: 5px 0;
+    color: #856404;
+}
 
 .modal-info {
     background: #f0f4ff;
@@ -541,6 +578,62 @@ body {
     cursor: not-allowed;
 }
 
+.user-profile {
+    max-width: 100%;
+}
+
+.profile-info-card {
+    background: #f9f9f9;
+    border-radius: 8px;
+    padding: 25px;
+    margin-top: 20px;
+}
+
+.profile-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 0;
+    border-bottom: 1px solid #e0e0e0;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.profile-row:last-child {
+    border-bottom: none;
+}
+
+.profile-label {
+    font-weight: 600;
+    color: #555;
+    min-width: 180px;
+}
+
+.profile-value {
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex: 1;
+}
+
+.change-password-icon-btn {
+    padding: 8px 16px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.3s;
+    white-space: nowrap;
+}
+
+.change-password-icon-btn:hover {
+    background: #5568d3;
+}
+
 .loading {
     text-align: center;
     padding: 40px;
@@ -574,5 +667,21 @@ body {
     .users-table th,
     .users-table td {
         padding: 8px;
+    }
+
+    .profile-row {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .profile-label {
+        min-width: auto;
+        width: 100%;
+    }
+
+    .profile-value {
+        width: 100%;
+        flex-direction: column;
+        align-items: flex-start;
     }
 }

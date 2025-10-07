@@ -54,7 +54,7 @@ const Login = () => {
     return (
         <div className="login-container">
             <div className="login-box">
-                <h1>System Bezpieczeństwa</h1>
+                <h1>Cyberbezpieczeństwo</h1>
                 <h2>Logowanie</h2>
 
                 <form onSubmit={handleSubmit} className="login-form">
@@ -101,11 +101,7 @@ const Login = () => {
                     </button>
                 </form>
 
-                <div className="login-info">
-                    <p>Domyślne konto administratora:</p>
-                    <p>Login: <strong>ADMIN</strong></p>
-                    <p>Hasło: <strong>Admin123!</strong></p>
-                </div>
+
             </div>
         </div>
     );

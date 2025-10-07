@@ -228,3 +228,13 @@ export const resetUserPassword = async (userId, newPassword) => {
         throw error.response?.data || error;
     }
 };
+
+
+export const getUserProfile = async () => {
+    try {
+        const response = await apiClient.get('/user/profile');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};

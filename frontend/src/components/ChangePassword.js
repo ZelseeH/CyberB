@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { changePassword, getPasswordSettings } from '../services/api';
 import { toast } from 'react-toastify';
 
-const ChangePassword = ({ currentUser }) => {
+const ChangePassword = ({ currentUser, onSuccess }) => {
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -41,11 +41,15 @@ const ChangePassword = ({ currentUser }) => {
         setLoading(true);
 
         try {
-            const response = await changePassword(currentUser.id, oldPassword, newPassword);
+            await changePassword(currentUser.id, oldPassword, newPassword);
             toast.success('Hasło zostało zmienione pomyślnie');
             setOldPassword('');
             setNewPassword('');
             setConfirmPassword('');
+
+            if (onSuccess) {
+                onSuccess();
+            }
         } catch (error) {
             if (error.error) {
                 if (Array.isArray(error.error)) {
@@ -85,8 +89,6 @@ const ChangePassword = ({ currentUser }) => {
 
     return (
         <div className="change-password">
-            <h2>Zmiana hasła</h2>
-
             {renderPasswordRequirements()}
 
             <form onSubmit={handleSubmit} className="change-password-form">
