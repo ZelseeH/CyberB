@@ -1,14 +1,16 @@
+# init_db.py
+
 from app import app, db
-from models import User, PasswordSettings, PasswordHistory
+from models import User, PasswordSettings, PasswordHistory, Log
 
 
 def init_database():
     with app.app_context():
-        # Usuń wszystkie tabele i utwórz na nowo
+        # Usuń stare tabele i utwórz nowe (z nowymi kolumnami)
         db.drop_all()
         db.create_all()
 
-        # Dodaj domyślne ustawienia hasła
+        # Utwórz domyślne ustawienia haseł
         default_settings = PasswordSettings(
             min_length=8,
             require_capital_letter=1,
@@ -16,24 +18,32 @@ def init_database():
             require_digits=1,
         )
         db.session.add(default_settings)
+        print("✓ Utworzono domyślne ustawienia haseł")
 
-        # Dodaj domyślnego administratora (login: ADMIN, hasło: Admin123!)
+        # Utwórz konto administratora
         admin = User(
             username="ADMIN",
             full_name="Administrator",
             is_admin=1,
             must_change_password=0,
-            password_expiry_days=0,  # Hasło admina nie wygasa
+            password_expiry_days=0,
         )
         admin.set_password("Admin123!")
         db.session.add(admin)
+        print("✓ Utworzono konto administratora")
+        print("Login: ADMIN")
+        print("Hasło: Admin123!")
 
         db.session.commit()
         print("✓ Baza danych została zainicjalizowana!")
-        print("✓ Domyślne konto administratora:")
-        print("  Login: ADMIN")
-        print("  Hasło: Admin123!")
+        print("\n⚠️  UWAGA: Wszystkie poprzednie dane zostały usunięte!")
 
 
 if __name__ == "__main__":
-    init_database()
+    print("=== Inicjalizacja bazy danych ===\n")
+    confirmation = input("To usunie całą bazę danych i utworzy ją od nowa. Kontynuować? (tak/nie): ")
+    
+    if confirmation.lower() in ['tak', 't', 'yes', 'y']:
+        init_database()
+    else:
+        print("Anulowano.")

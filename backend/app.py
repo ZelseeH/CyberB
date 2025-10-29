@@ -1,3 +1,5 @@
+# app.py
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import Config
@@ -6,6 +8,7 @@ import re
 import jwt
 from datetime import datetime, timedelta
 from functools import wraps
+from models import db, User, PasswordSettings, PasswordHistory, Log
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -143,37 +146,63 @@ def login():
     data = request.get_json()
     username = data.get("username")
     password = data.get("password")
+    otp_answer = data.get("otp_answer")
+    ip_address = request.remote_addr
 
     user = User.query.filter_by(username=username).first()
 
     if not user:
+        log_action(username or "unknown", "login_failed", "User not found", ip_address)
         return jsonify({"error": "Login lub Hasło niepoprawny"}), 401
 
     if user.is_blocked:
+        log_action(username, "login_failed", "Account blocked", ip_address)
         return jsonify({"error": "Konto zablokowane"}), 403
 
-    if not user.check_password(password):
-        return jsonify({"error": "Login lub Hasło niepoprawny"}), 401
+    # Sprawdź czy użytkownik ma włączone hasło jednorazowe
+    if user.one_time_password_enabled:
+        if not otp_answer:
+            # Zwróć informację o potrzebie OTP
+            return jsonify({
+                "requires_otp": True
+            })
+        
+        # Weryfikuj odpowiedź hasła jednorazowego
+        if not user.verify_one_time_password(otp_answer):
+            log_action(username, "login_failed", "Invalid OTP answer", ip_address)
+            return jsonify({"error": "Niepoprawna odpowiedź hasła jednorazowego"}), 401
+        
+        # Po poprawnym użyciu hasła jednorazowego, wyłącz je
+        user.disable_one_time_password()
+        db.session.commit()
+        
+        # Wymuś zmianę hasła po użyciu OTP
+        user.must_change_password = 1
+        db.session.commit()
+    else:
+        # Standardowa weryfikacja hasła
+        if not user.check_password(password):
+            log_action(username, "login_failed", "Invalid password", ip_address)
+            return jsonify({"error": "Login lub Hasło niepoprawny"}), 401
 
     password_expired = user.is_password_expired()
-
     token = generate_token(user.id, user.username, user.is_admin)
+    
+    log_action(username, "login_success", None, ip_address)
 
-    return jsonify(
-        {
-            "success": True,
-            "token": token,
-            "expires_in": 900,
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "full_name": user.full_name,
-                "is_admin": user.is_admin,
-                "must_change_password": user.must_change_password or password_expired,
-                "password_expired": password_expired,
-            },
-        }
-    )
+    return jsonify({
+        "success": True,
+        "token": token,
+        "expires_in": 900,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "must_change_password": user.must_change_password or password_expired,
+            "password_expired": password_expired,
+        },
+    })
 
 
 @app.route("/api/verify-token", methods=["GET"])
@@ -216,8 +245,11 @@ def get_user_profile(current_user_id):
 
 
 @app.route("/api/logout", methods=["POST"])
-def logout():
+@token_required
+def logout(current_user_id):
     """Wylogowanie - token jest usuwany po stronie frontendu"""
+    user = User.query.get(current_user_id)
+    log_action(user.username if user else "unknown", "logout", None, request.remote_addr)
     return jsonify({"success": True, "message": "Wylogowano pomyślnie"})
 
 
@@ -235,29 +267,33 @@ def change_password(current_user_id):
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
 
     if current_user_id != user_id:
-        return (
-            jsonify({"error": "Brak uprawnień do zmiany hasła tego użytkownika"}),
-            403,
-        )
+        return jsonify({"error": "Brak uprawnień do zmiany hasła tego użytkownika"}), 403
 
-    if not user.check_password(old_password):
-        return jsonify({"error": "Stare hasło niepoprawne"}), 401
+    if not (user.must_change_password and user.reset_with_otp):
+        if not user.check_password(old_password):
+            log_action(user.username, "password_changed", "Failed - incorrect old password", request.remote_addr)
+            return jsonify({"error": "Stare hasło niepoprawne"}), 401
 
     errors = validate_password(new_password)
     if errors:
         return jsonify({"error": errors}), 400
 
     if user.check_password_in_history(new_password):
+        log_action(user.username, "password_changed", "Failed - password reused", request.remote_addr)
         return jsonify({"error": "To hasło było już używane. Wybierz nowe hasło."}), 400
 
-    history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
-    db.session.add(history_entry)
+    if user.password_hash is not None:
+        history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
+        db.session.add(history_entry)
 
     user.set_password(new_password)
     user.last_password_change = datetime.utcnow()
     user.must_change_password = 0
+    user.reset_with_otp = False
 
     db.session.commit()
+    
+    log_action(user.username, "password_changed", "Password changed successfully", request.remote_addr)
 
     return jsonify({"success": True, "message": "Hasło zmienione pomyślnie"})
 
@@ -274,6 +310,10 @@ def get_password_settings(current_user_id):
 def update_password_settings():
     data = request.get_json()
     settings = PasswordSettings.query.first()
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     if not settings:
         settings = PasswordSettings()
@@ -285,6 +325,13 @@ def update_password_settings():
     settings.require_digits = data.get("require_digits", 1)
 
     db.session.commit()
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        "password_settings_updated",
+        f"Updated password settings",
+        request.remote_addr
+    )
 
     return jsonify({"success": True, "message": "Ustawienia zaktualizowane"})
 
@@ -300,6 +347,10 @@ def get_users():
 @admin_required
 def create_user():
     data = request.get_json()
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     existing_user = User.query.filter_by(username=data["username"]).first()
     if existing_user:
@@ -312,21 +363,41 @@ def create_user():
         password_expiry_days=data.get("password_expiry_days", 90),
         must_change_password=1,
     )
-    new_user.set_password("User123!")
+    
+    use_otp = data.get("use_one_time_password", False)
+    # Sprawdź czy włączyć hasło jednorazowe
+    if use_otp:
+        otp = data.get("one_time_password")
+        if not otp:
+            return jsonify({"error": "Hasło jednorazowe jest wymagane"}), 400
+        new_user.set_one_time_password(otp)
+        new_user.password_hash = None
+        message = f"Użytkownik utworzony z hasłem jednorazowym"
+    else:
+        new_user.set_password("User123!")
+        new_user.reset_with_otp = False
+        message = "Użytkownik utworzony. Domyślne hasło: User123!"
 
     db.session.add(new_user)
     db.session.commit()
-
-    return (
-        jsonify(
-            {
-                "success": True,
-                "user_id": new_user.id,
-                "message": "Użytkownik utworzony. Domyślne hasło: User123!",
-            }
-        ),
-        201,
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        "user_created",
+        f"Created user: {new_user.username}" + (" with OTP" if new_user.one_time_password_enabled else ""),
+        request.remote_addr
     )
+
+    response_data = {
+        "success": True,
+        "user_id": new_user.id,
+        "message": message,
+    }
+    
+    if use_otp:
+        response_data["otp"] = otp
+    
+    return jsonify(response_data), 201
 
 
 @app.route("/api/users/<int:user_id>", methods=["PUT"])
@@ -334,18 +405,42 @@ def create_user():
 def update_user(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
 
     user.full_name = data.get("full_name", user.full_name)
-    user.password_expiry_days = data.get(
-        "password_expiry_days", user.password_expiry_days
-    )
+    user.password_expiry_days = data.get("password_expiry_days", user.password_expiry_days)
+    
+    use_otp = data.get("use_one_time_password", False)
+    # Sprawdź czy włączyć hasło jednorazowe
+    if use_otp:
+        otp = data.get("one_time_password")
+        if not otp:
+            return jsonify({"error": "Hasło jednorazowe jest wymagane"}), 400
+        user.set_one_time_password(otp)
+        user.password_hash = None
+        user.must_change_password = 1
 
     db.session.commit()
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        "user_updated",
+        f"Updated user: {user.username}" + (" - OTP enabled" if use_otp else ""),
+        request.remote_addr
+    )
 
-    return jsonify({"success": True, "message": "Użytkownik zaktualizowany"})
+    response_data = {"success": True, "message": "Użytkownik zaktualizowany"}
+    
+    if use_otp:
+        response_data["otp"] = otp
+    
+    return jsonify(response_data)
 
 
 @app.route("/api/users/<int:user_id>/block", methods=["PUT"])
@@ -353,6 +448,10 @@ def update_user(user_id):
 def block_user(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
@@ -361,6 +460,15 @@ def block_user(user_id):
     db.session.commit()
 
     status = "zablokowany" if user.is_blocked else "odblokowany"
+    action_type = "user_blocked" if user.is_blocked else "user_unblocked"
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        action_type,
+        f"User {user.username} {status}",
+        request.remote_addr
+    )
+    
     return jsonify({"success": True, "message": f"Użytkownik {status}"})
 
 
@@ -368,6 +476,10 @@ def block_user(user_id):
 @admin_required
 def delete_user(user_id):
     user = User.query.get(user_id)
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
@@ -375,8 +487,16 @@ def delete_user(user_id):
     if user.username == "ADMIN":
         return jsonify({"error": "Nie można usunąć konta administratora"}), 403
 
+    username = user.username
     db.session.delete(user)
     db.session.commit()
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        "user_deleted",
+        f"Deleted user: {username}",
+        request.remote_addr
+    )
 
     return jsonify({"success": True, "message": "Użytkownik usunięty"})
 
@@ -386,28 +506,96 @@ def delete_user(user_id):
 def reset_user_password(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
 
-    new_password = data.get("new_password", "User123!")
+    use_otp = data.get("use_one_time_password", False)
+    
+    if use_otp:
+        # Ustaw hasło jednorazowe
+        otp = data.get("one_time_password")
+        if not otp:
+            return jsonify({"error": "Hasło jednorazowe jest wymagane"}), 400
+        user.set_one_time_password(otp)
+        user.password_hash = None
+        user.last_password_change = datetime.utcnow()
+        user.must_change_password = 1
+        
+        db.session.commit()
+        
+        log_action(
+            admin_user.username if admin_user else "ADMIN",
+            "password_reset",
+            f"Generated OTP for user: {user.username}",
+            request.remote_addr
+        )
+        
+        return jsonify({
+            "success": True,
+            "message": "Wygenerowano hasło jednorazowe",
+            "otp": otp
+        })
+    else:
+        # Standardowy reset hasła
+        new_password = data.get("new_password", "User123!")
+        
+        errors = validate_password(new_password)
+        if errors:
+            return jsonify({"error": errors}), 400
 
-    errors = validate_password(new_password)
-    if errors:
-        return jsonify({"error": errors}), 400
+        if user.password_hash is not None:
+            history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
+            db.session.add(history_entry)
 
-    history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
-    db.session.add(history_entry)
+        user.set_password(new_password)
+        user.last_password_change = datetime.utcnow()
+        user.must_change_password = 1
+        user.disable_one_time_password()  # Wyłącz OTP jeśli było włączone
+        user.reset_with_otp = False
 
-    user.set_password(new_password)
-    user.last_password_change = datetime.utcnow()
-    user.must_change_password = 1
+        db.session.commit()
+        
+        log_action(
+            admin_user.username if admin_user else "ADMIN",
+            "password_reset",
+            f"Reset password for user: {user.username}",
+            request.remote_addr
+        )
 
-    db.session.commit()
+        return jsonify({"success": True, "message": "Hasło użytkownika zostało zresetowane"})
 
-    return jsonify(
-        {"success": True, "message": "Hasło użytkownika zostało zresetowane"}
-    )
+
+def log_action(username, action_type, description=None, ip_address=None):
+    """Zapisuje akcję użytkownika w logach"""
+    try:
+        log_entry = Log(
+            username=username,
+            action_type=action_type,
+            description=description,
+            ip_address=ip_address
+        )
+        db.session.add(log_entry)
+        db.session.commit()
+    except Exception as e:
+        print(f"Error logging action: {str(e)}")
+        db.session.rollback()
+
+
+@app.route("/api/logs", methods=["GET"])
+@admin_required
+def get_logs():
+    """Pobiera wszystkie logi systemowe"""
+    try:
+        logs = Log.query.order_by(Log.created_at.desc()).all()
+        return jsonify([log.to_dict() for log in logs])
+    except Exception as e:
+        print(f"Error fetching logs: {str(e)}")
+        return jsonify({"error": "Błąd podczas pobierania logów"}), 500
 
 
 if __name__ == "__main__":

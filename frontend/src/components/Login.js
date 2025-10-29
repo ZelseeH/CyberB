@@ -1,3 +1,5 @@
+// Login.js
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login, isAuthenticated, isAdmin } from '../services/api';
@@ -7,8 +9,10 @@ const Login = () => {
     const navigate = useNavigate();
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
+    const [otpAnswer, setOtpAnswer] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [otpRequired, setOtpRequired] = useState(false);
 
     useEffect(() => {
         if (isAuthenticated()) {
@@ -25,13 +29,27 @@ const Login = () => {
         setLoading(true);
 
         try {
-            const response = await login(username, password);
+            let data = { username };
+            if (otpRequired) {
+                data.otp_answer = otpAnswer;
+            } else {
+                data.password = password;
+            }
+            const response = await login(data);  // Zakładając, że login przyjmuje obiekt data
+
+            if (response.requires_otp) {
+                setOtpRequired(true);
+                setPassword('');
+                setLoading(false);
+                toast.info('Wymagane hasło jednorazowe. Wpisz je poniżej.');
+                return;
+            }
 
             if (response.success) {
                 toast.success('Zalogowano pomyślnie');
 
                 if (response.user.must_change_password) {
-                    toast.info('Musisz zmienić hasło przy pierwszym logowaniu');
+                    toast.info('Musisz zmienić hasło');
                 }
 
                 if (response.user.is_admin === 1) {
@@ -72,36 +90,49 @@ const Login = () => {
                         />
                     </div>
 
-                    <div className="form-group">
-                        <label htmlFor="password">Hasło:</label>
-                        <div className="password-input-wrapper">
+                    {!otpRequired ? (
+                        <div className="form-group">
+                            <label htmlFor="password">Hasło:</label>
+                            <div className="password-input-wrapper">
+                                <input
+                                    type={showPassword ? 'text' : 'password'}
+                                    id="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                    disabled={loading}
+                                    autoComplete="current-password"
+                                    placeholder="Wprowadź hasło"
+                                />
+                                <button
+                                    type="button"
+                                    className="toggle-password"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    disabled={loading}
+                                >
+                                    {showPassword ? '👁️' : '👁️‍🗨️'}
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="form-group">
+                            <label htmlFor="otp_answer">Hasło jednorazowe:</label>
                             <input
-                                type={showPassword ? 'text' : 'password'}
-                                id="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
+                                type="text"
+                                id="otp_answer"
+                                value={otpAnswer}
+                                onChange={(e) => setOtpAnswer(e.target.value)}
                                 required
                                 disabled={loading}
-                                autoComplete="current-password"
-                                placeholder="Wprowadź hasło"
+                                placeholder="Wpisz hasło jednorazowe"
                             />
-                            <button
-                                type="button"
-                                className="toggle-password"
-                                onClick={() => setShowPassword(!showPassword)}
-                                disabled={loading}
-                            >
-                                {showPassword ? '👁️' : '👁️‍🗨️'}
-                            </button>
                         </div>
-                    </div>
+                    )}
 
                     <button type="submit" className="login-btn" disabled={loading}>
                         {loading ? 'Logowanie...' : 'Zaloguj się'}
                     </button>
                 </form>
-
-
             </div>
         </div>
     );

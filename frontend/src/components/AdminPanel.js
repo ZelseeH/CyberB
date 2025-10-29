@@ -1,9 +1,12 @@
+// AdminPanel.js
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { logout, getCurrentUser, getTimeRemaining } from '../services/api';
 import UserManagement from './UserManagement';
 import PasswordSettings from './PasswordSettings';
 import ChangePassword from './ChangePassword';
+import Logs from './Logs';
 import { toast } from 'react-toastify';
 
 const AdminPanel = () => {
@@ -80,6 +83,12 @@ const AdminPanel = () => {
                         Zarządzanie użytkownikami
                     </button>
                     <button
+                        className={activeTab === 'logs' ? 'active' : ''}
+                        onClick={() => setActiveTab('logs')}
+                    >
+                        Logi zdarzeń
+                    </button>
+                    <button
                         className={activeTab === 'password-settings' ? 'active' : ''}
                         onClick={() => setActiveTab('password-settings')}
                     >
@@ -95,6 +104,7 @@ const AdminPanel = () => {
 
                 <div className="admin-main">
                     {activeTab === 'users' && <UserManagement />}
+                    {activeTab === 'logs' && <Logs />}
                     {activeTab === 'password-settings' && <PasswordSettings />}
                     {activeTab === 'change-password' && <ChangePassword currentUser={currentUser} />}
                 </div>
