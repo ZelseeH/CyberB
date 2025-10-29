@@ -3,18 +3,26 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import Config
-from models import db, User, PasswordSettings, PasswordHistory
+from models import db, User, PasswordSettings, PasswordHistory, SystemSettings
 import re
 import jwt
 from datetime import datetime, timedelta
 from functools import wraps
-from models import db, User, PasswordSettings, PasswordHistory, Log
+from models import db, User, PasswordSettings, PasswordHistory, Log, SystemSettings
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
 db.init_app(app)
 CORS(app)
+
+with app.app_context():
+    db.create_all()
+    if PasswordSettings.query.first() is None:
+        db.session.add(PasswordSettings())
+    if SystemSettings.query.first() is None:
+        db.session.add(SystemSettings())
+    db.session.commit()
 
 
 def generate_token(user_id, username, is_admin):
@@ -159,6 +167,10 @@ def login():
         log_action(username, "login_failed", "Account blocked", ip_address)
         return jsonify({"error": "Konto zablokowane"}), 403
 
+    if user.is_locked_out():
+        log_action(username, "login_failed", "Account locked out", ip_address)
+        return jsonify({"error": "Konto tymczasowo zablokowane. Spróbuj ponownie za 15 minut."}), 403
+
     # Sprawdź czy użytkownik ma włączone hasło jednorazowe
     if user.one_time_password_enabled:
         if not otp_answer:
@@ -169,11 +181,13 @@ def login():
         
         # Weryfikuj odpowiedź hasła jednorazowego
         if not user.verify_one_time_password(otp_answer):
+            user.record_failed_attempt()
             log_action(username, "login_failed", "Invalid OTP answer", ip_address)
             return jsonify({"error": "Niepoprawna odpowiedź hasła jednorazowego"}), 401
         
         # Po poprawnym użyciu hasła jednorazowego, wyłącz je
         user.disable_one_time_password()
+        user.reset_failed_attempts()
         db.session.commit()
         
         # Wymuś zmianę hasła po użyciu OTP
@@ -182,8 +196,10 @@ def login():
     else:
         # Standardowa weryfikacja hasła
         if not user.check_password(password):
+            user.record_failed_attempt()
             log_action(username, "login_failed", "Invalid password", ip_address)
             return jsonify({"error": "Login lub Hasło niepoprawny"}), 401
+        user.reset_failed_attempts()
 
     password_expired = user.is_password_expired()
     token = generate_token(user.id, user.username, user.is_admin)
@@ -330,6 +346,42 @@ def update_password_settings():
         admin_user.username if admin_user else "ADMIN",
         "password_settings_updated",
         f"Updated password settings",
+        request.remote_addr
+    )
+
+    return jsonify({"success": True, "message": "Ustawienia zaktualizowane"})
+
+
+@app.route("/api/system-settings", methods=["GET"])
+@token_required
+def get_system_settings(current_user_id):
+    settings = SystemSettings.query.first()
+    return jsonify(settings.to_dict() if settings else {})
+
+
+@app.route("/api/system-settings", methods=["PUT"])
+@admin_required
+def update_system_settings():
+    data = request.get_json()
+    settings = SystemSettings.query.first()
+    
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    payload = verify_token(token)
+    admin_user = User.query.get(payload["user_id"]) if payload else None
+
+    if not settings:
+        settings = SystemSettings()
+        db.session.add(settings)
+
+    settings.failed_login_limit = data.get("failed_login_limit", 5)
+    settings.idle_timeout_minutes = data.get("idle_timeout_minutes", 15)
+
+    db.session.commit()
+    
+    log_action(
+        admin_user.username if admin_user else "ADMIN",
+        "system_settings_updated",
+        f"Updated system settings",
         request.remote_addr
     )
 

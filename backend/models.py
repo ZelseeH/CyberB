@@ -1,10 +1,6 @@
-# models.py
-
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
-import random
-import math
 
 db = SQLAlchemy()
 
@@ -28,6 +24,21 @@ class PasswordSettings(db.Model):
         }
 
 
+class SystemSettings(db.Model):
+    __tablename__ = "system_settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    failed_login_limit = db.Column(db.Integer, default=5, nullable=False)
+    idle_timeout_minutes = db.Column(db.Integer, default=15, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "failed_login_limit": self.failed_login_limit,
+            "idle_timeout_minutes": self.idle_timeout_minutes,
+        }
+
+
 class User(db.Model):
     __tablename__ = "users"
 
@@ -44,6 +55,9 @@ class User(db.Model):
     one_time_password_enabled = db.Column(db.Boolean, default=False, nullable=False)
     one_time_password_hash = db.Column(db.String(255), nullable=True)
     reset_with_otp = db.Column(db.Boolean, default=False, nullable=False)
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    last_failed_attempt = db.Column(db.DateTime, nullable=True)
+    last_lockout = db.Column(db.DateTime, nullable=True)
 
     # Relacja z historią haseł
     password_history = db.relationship(
@@ -94,6 +108,36 @@ class User(db.Model):
             days=self.password_expiry_days
         )
         return datetime.utcnow() > expiry_date
+
+    def is_locked_out(self):
+        """Sprawdza czy konto jest tymczasowo zablokowane"""
+        settings = SystemSettings.query.first()
+        if self.failed_attempts >= settings.failed_login_limit and self.last_lockout:
+            from datetime import timedelta
+            unlock_time = self.last_lockout + timedelta(minutes=15)
+            if datetime.utcnow() < unlock_time:
+                return True
+            else:
+                # Reset po upływie czasu
+                self.failed_attempts = 0
+                self.last_lockout = None
+                db.session.commit()
+        return False
+
+    def record_failed_attempt(self):
+        """Rejestruje nieudaną próbę logowania"""
+        self.failed_attempts += 1
+        self.last_failed_attempt = datetime.utcnow()
+        settings = SystemSettings.query.first()
+        if self.failed_attempts >= settings.failed_login_limit:
+            self.last_lockout = datetime.utcnow()
+        db.session.commit()
+
+    def reset_failed_attempts(self):
+        """Resetuje licznik nieudanych prób"""
+        self.failed_attempts = 0
+        self.last_lockout = None
+        db.session.commit()
 
     def to_dict(self, include_sensitive=False):
         data = {

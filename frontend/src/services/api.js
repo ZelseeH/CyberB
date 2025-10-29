@@ -122,6 +122,24 @@ export const updatePasswordSettings = async (settings) => {
     }
 };
 
+export const getSystemSettings = async () => {
+    try {
+        const response = await apiClient.get('/system-settings');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const updateSystemSettings = async (settings) => {
+    try {
+        const response = await apiClient.put('/system-settings', settings);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
 export const getUsers = async () => {
     try {
         const response = await apiClient.get('/users');
