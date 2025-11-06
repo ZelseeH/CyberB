@@ -1,3 +1,5 @@
+// api.js
+
 import axios from 'axios';
 
 const API_BASE_URL = 'http://127.0.0.1:5000/api';
@@ -47,12 +49,9 @@ export const testConnection = async () => {
     }
 };
 
-export const login = async (username, password) => {
+export const login = async (data) => {
     try {
-        const response = await axios.post(`${API_BASE_URL}/login`, {
-            username,
-            password,
-        });
+        const response = await axios.post(`${API_BASE_URL}/login`, data);
 
         if (response.data.success) {
             localStorage.setItem('token', response.data.token);
@@ -117,6 +116,24 @@ export const getPasswordSettings = async () => {
 export const updatePasswordSettings = async (settings) => {
     try {
         const response = await apiClient.put('/password-settings', settings);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const getSystemSettings = async () => {
+    try {
+        const response = await apiClient.get('/system-settings');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const updateSystemSettings = async (settings) => {
+    try {
+        const response = await apiClient.put('/system-settings', settings);
         return response.data;
     } catch (error) {
         throw error.response?.data || error;
@@ -218,11 +235,9 @@ export const getTimeRemaining = () => {
 
 export default apiClient;
 
-export const resetUserPassword = async (userId, newPassword) => {
+export const resetUserPassword = async (userId, data) => {
     try {
-        const response = await apiClient.put(`/users/${userId}/reset-password`, {
-            new_password: newPassword,
-        });
+        const response = await apiClient.put(`/users/${userId}/reset-password`, data);
         return response.data;
     } catch (error) {
         throw error.response?.data || error;

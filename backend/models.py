@@ -24,12 +24,27 @@ class PasswordSettings(db.Model):
         }
 
 
+class SystemSettings(db.Model):
+    __tablename__ = "system_settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    failed_login_limit = db.Column(db.Integer, default=5, nullable=False)
+    idle_timeout_minutes = db.Column(db.Integer, default=15, nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "failed_login_limit": self.failed_login_limit,
+            "idle_timeout_minutes": self.idle_timeout_minutes,
+        }
+
+
 class User(db.Model):
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
+    password_hash = db.Column(db.String(255))
     full_name = db.Column(db.String(200))
     is_admin = db.Column(db.Integer, default=0, nullable=False)
     is_blocked = db.Column(db.Integer, default=0, nullable=False)
@@ -37,6 +52,12 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_password_change = db.Column(db.DateTime, default=datetime.utcnow)
     must_change_password = db.Column(db.Integer, default=1, nullable=False)
+    one_time_password_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    one_time_password_hash = db.Column(db.String(255), nullable=True)
+    reset_with_otp = db.Column(db.Boolean, default=False, nullable=False)
+    failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    last_failed_attempt = db.Column(db.DateTime, nullable=True)
+    last_lockout = db.Column(db.DateTime, nullable=True)
 
     # Relacja z historią haseł
     password_history = db.relationship(
@@ -49,7 +70,26 @@ class User(db.Model):
 
     def check_password(self, password):
         """Sprawdza czy hasło jest poprawne"""
+        if self.password_hash is None:
+            return False
         return check_password_hash(self.password_hash, password)
+
+    def set_one_time_password(self, otp):
+        """Ustawia hasło jednorazowe"""
+        self.one_time_password_hash = generate_password_hash(otp)
+        self.one_time_password_enabled = True
+        self.reset_with_otp = True
+
+    def verify_one_time_password(self, otp):
+        """Weryfikuje hasło jednorazowe"""
+        if not self.one_time_password_enabled:
+            return False
+        return check_password_hash(self.one_time_password_hash, otp)
+
+    def disable_one_time_password(self):
+        """Wyłącza hasło jednorazowe"""
+        self.one_time_password_enabled = False
+        self.one_time_password_hash = None
 
     def check_password_in_history(self, password):
         """Sprawdza czy hasło było już używane"""
@@ -69,6 +109,36 @@ class User(db.Model):
         )
         return datetime.utcnow() > expiry_date
 
+    def is_locked_out(self):
+        """Sprawdza czy konto jest tymczasowo zablokowane"""
+        settings = SystemSettings.query.first()
+        if self.failed_attempts >= settings.failed_login_limit and self.last_lockout:
+            from datetime import timedelta
+            unlock_time = self.last_lockout + timedelta(minutes=15)
+            if datetime.utcnow() < unlock_time:
+                return True
+            else:
+                # Reset po upływie czasu
+                self.failed_attempts = 0
+                self.last_lockout = None
+                db.session.commit()
+        return False
+
+    def record_failed_attempt(self):
+        """Rejestruje nieudaną próbę logowania"""
+        self.failed_attempts += 1
+        self.last_failed_attempt = datetime.utcnow()
+        settings = SystemSettings.query.first()
+        if self.failed_attempts >= settings.failed_login_limit:
+            self.last_lockout = datetime.utcnow()
+        db.session.commit()
+
+    def reset_failed_attempts(self):
+        """Resetuje licznik nieudanych prób"""
+        self.failed_attempts = 0
+        self.last_lockout = None
+        db.session.commit()
+
     def to_dict(self, include_sensitive=False):
         data = {
             "id": self.id,
@@ -84,6 +154,7 @@ class User(db.Model):
                 else None
             ),
             "must_change_password": self.must_change_password,
+            "one_time_password_enabled": self.one_time_password_enabled,
         }
         if include_sensitive:
             data["password_expired"] = self.is_password_expired()
@@ -103,4 +174,24 @@ class PasswordHistory(db.Model):
             "id": self.id,
             "user_id": self.user_id,
             "changed_at": self.changed_at.isoformat() if self.changed_at else None,
+        }
+
+class Log(db.Model):
+    __tablename__ = 'logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(255), nullable=False, index=True)
+    action_type = db.Column(db.String(100), nullable=False, index=True)
+    description = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'action_type': self.action_type,
+            'description': self.description,
+            'ip_address': self.ip_address,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }

@@ -433,8 +433,11 @@ body {
 }
 
 .actions-cell {
-    display: flex;
     gap: 8px;
+}
+
+.btn {
+    margin: 3px;
 }
 
 .edit-btn,

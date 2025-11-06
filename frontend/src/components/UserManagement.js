@@ -1,3 +1,5 @@
+// UserManagement.js
+
 import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, updateUser, blockUser, deleteUser, resetUserPassword } from '../services/api';
 import { toast } from 'react-toastify';
@@ -14,12 +16,17 @@ const UserManagement = () => {
         full_name: '',
         password_expiry_days: 90,
         is_admin: 0,
+        use_one_time_password: false,
+        one_time_password: '',
     });
     const [resetPasswordData, setResetPasswordData] = useState({
         userId: null,
         username: '',
         newPassword: 'User123!',
+        use_one_time_password: false,
+        one_time_password: '',
     });
+    const [otpValue, setOtpValue] = useState(null);
 
     useEffect(() => {
         fetchUsers();
@@ -43,8 +50,23 @@ const UserManagement = () => {
         setLoading(true);
 
         try {
-            await createUser(formData);
-            toast.success('Użytkownik został utworzony. Domyślne hasło: User123!');
+            const payload = { ...formData };
+            if (!payload.use_one_time_password) {
+                delete payload.one_time_password;
+            } else if (!payload.one_time_password) {
+                toast.error('Hasło jednorazowe jest wymagane');
+                setLoading(false);
+                return;
+            }
+            const response = await createUser(payload);
+            
+            if (response.otp) {
+                setOtpValue(response.otp);
+                toast.success('Użytkownik został utworzony z hasłem jednorazowym!');
+            } else {
+                toast.success('Użytkownik został utworzony. Domyślne hasło: User123!');
+            }
+            
             setShowAddModal(false);
             resetForm();
             fetchUsers();
@@ -64,11 +86,28 @@ const UserManagement = () => {
         setLoading(true);
 
         try {
-            await updateUser(selectedUser.id, {
+            const payload = {
                 full_name: formData.full_name,
                 password_expiry_days: formData.password_expiry_days,
-            });
-            toast.success('Użytkownik został zaktualizowany');
+                use_one_time_password: formData.use_one_time_password,
+            };
+            if (payload.use_one_time_password) {
+                if (!formData.one_time_password) {
+                    toast.error('Hasło jednorazowe jest wymagane');
+                    setLoading(false);
+                    return;
+                }
+                payload.one_time_password = formData.one_time_password;
+            }
+            const response = await updateUser(selectedUser.id, payload);
+            
+            if (response.otp) {
+                setOtpValue(response.otp);
+                toast.success('Użytkownik zaktualizowany i ustawiono hasło jednorazowe');
+            } else {
+                toast.success('Użytkownik został zaktualizowany');
+            }
+            
             setShowEditModal(false);
             setSelectedUser(null);
             resetForm();
@@ -85,10 +124,34 @@ const UserManagement = () => {
         setLoading(true);
 
         try {
-            await resetUserPassword(resetPasswordData.userId, resetPasswordData.newPassword);
-            toast.success(`Hasło dla użytkownika ${resetPasswordData.username} zostało zresetowane`);
+            const payload = {
+                use_one_time_password: resetPasswordData.use_one_time_password,
+            };
+            if (!payload.use_one_time_password) {
+                payload.new_password = resetPasswordData.newPassword;
+            } else {
+                if (!resetPasswordData.one_time_password) {
+                    toast.error('Hasło jednorazowe jest wymagane');
+                    setLoading(false);
+                    return;
+                }
+                payload.one_time_password = resetPasswordData.one_time_password;
+            }
+            const response = await resetUserPassword(
+                resetPasswordData.userId,
+                payload
+            );
+            
+            if (response.otp) {
+                setOtpValue(response.otp);
+                toast.success(`Ustawiono hasło jednorazowe dla ${resetPasswordData.username}`);
+            } else {
+                toast.success(`Hasło dla użytkownika ${resetPasswordData.username} zostało zresetowane`);
+            }
+            
             setShowResetPasswordModal(false);
-            setResetPasswordData({ userId: null, username: '', newPassword: 'User123!' });
+            setResetPasswordData({ userId: null, username: '', newPassword: 'User123!', use_one_time_password: false, one_time_password: '' });
+            fetchUsers();  // Refresh users to update OTP status
         } catch (error) {
             if (error.error) {
                 if (Array.isArray(error.error)) {
@@ -133,6 +196,7 @@ const UserManagement = () => {
 
     const openAddModal = () => {
         resetForm();
+        setOtpValue(null);
         setShowAddModal(true);
     };
 
@@ -143,15 +207,20 @@ const UserManagement = () => {
             full_name: user.full_name || '',
             password_expiry_days: user.password_expiry_days,
             is_admin: user.is_admin,
+            use_one_time_password: false,
+            one_time_password: '',
         });
         setShowEditModal(true);
     };
 
     const openResetPasswordModal = (user) => {
+        setOtpValue(null);
         setResetPasswordData({
             userId: user.id,
             username: user.username,
             newPassword: 'User123!',
+            use_one_time_password: false,
+            one_time_password: '',
         });
         setShowResetPasswordModal(true);
     };
@@ -162,6 +231,8 @@ const UserManagement = () => {
             full_name: '',
             password_expiry_days: 90,
             is_admin: 0,
+            use_one_time_password: false,
+            one_time_password: '',
         });
     };
 
@@ -184,6 +255,14 @@ const UserManagement = () => {
                 </button>
             </div>
 
+            {otpValue && (
+                <div className="otp-info-banner">
+                    <h4>🔑 Hasło jednorazowe:</h4>
+                    <p><strong>{otpValue}</strong></p>
+                    <button onClick={() => setOtpValue(null)} className="close-banner-btn">×</button>
+                </div>
+            )}
+
             <div className="users-table-container">
                 <table className="users-table">
                     <thead>
@@ -193,6 +272,7 @@ const UserManagement = () => {
                             <th>Imię i nazwisko</th>
                             <th>Rola</th>
                             <th>Status</th>
+                            <th>Hasło jednorazowe</th>
                             <th>Ważność hasła (dni)</th>
                             <th>Data utworzenia</th>
                             <th>Akcje</th>
@@ -214,26 +294,31 @@ const UserManagement = () => {
                                         {user.is_blocked ? 'Zablokowany' : 'Aktywny'}
                                     </span>
                                 </td>
+                                <td>
+                                    <span className={`otp-badge ${user.one_time_password_enabled ? 'enabled' : 'disabled'}`}>
+                                        {user.one_time_password_enabled ? '✓ Włączone' : '✗ Wyłączone'}
+                                    </span>
+                                </td>
                                 <td>{user.password_expiry_days === 0 ? 'Nigdy' : user.password_expiry_days}</td>
                                 <td>{formatDate(user.created_at)}</td>
                                 <td className="actions-cell">
                                     <button
                                         onClick={() => openEditModal(user)}
-                                        className="edit-btn"
+                                        className="btn edit-btn"
                                         title="Edytuj"
                                     >
                                         ✏️
                                     </button>
                                     <button
                                         onClick={() => openResetPasswordModal(user)}
-                                        className="reset-password-btn"
+                                        className="btn reset-password-btn"
                                         title="Resetuj hasło"
                                     >
                                         🔑
                                     </button>
                                     <button
                                         onClick={() => handleBlockUser(user.id, user.is_blocked)}
-                                        className={user.is_blocked ? 'unblock-btn' : 'block-btn'}
+                                        className={user.is_blocked ? 'btn unblock-btn' : 'btn block-btn'}
                                         title={user.is_blocked ? 'Odblokuj' : 'Zablokuj'}
                                     >
                                         {user.is_blocked ? '🔓' : '🔒'}
@@ -241,7 +326,7 @@ const UserManagement = () => {
                                     {user.username !== 'ADMIN' && (
                                         <button
                                             onClick={() => handleDeleteUser(user.id, user.username)}
-                                            className="delete-btn"
+                                            className="btn delete-btn"
                                             title="Usuń"
                                         >
                                             🗑️
@@ -305,9 +390,41 @@ const UserManagement = () => {
                                 </label>
                             </div>
 
+                            <div className="form-group checkbox-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.use_one_time_password}
+                                        onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })}
+                                        disabled={loading}
+                                    />
+                                    <span>Użyj hasła jednorazowego</span>
+                                </label>
+                            </div>
+
+                            {formData.use_one_time_password && (
+                                <div className="form-group">
+                                    <label>Hasło jednorazowe:</label>
+                                    <input
+                                        type="text"
+                                        value={formData.one_time_password}
+                                        onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })}
+                                        required
+                                        disabled={loading}
+                                        placeholder="Wprowadź hasło jednorazowe"
+                                    />
+                                </div>
+                            )}
+
                             <div className="modal-info">
-                                <p>Domyślne hasło: <strong>User123!</strong></p>
-                                <p>Użytkownik będzie musiał zmienić hasło przy pierwszym logowaniu.</p>
+                                {formData.use_one_time_password ? (
+                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                ) : (
+                                    <>
+                                        <p>Domyślne hasło: <strong>User123!</strong></p>
+                                        <p>Użytkownik będzie musiał zmienić hasło przy pierwszym logowaniu.</p>
+                                    </>
+                                )}
                             </div>
 
                             <div className="modal-actions">
@@ -366,6 +483,38 @@ const UserManagement = () => {
                                 <span className="help-text">0 = hasło nigdy nie wygasa</span>
                             </div>
 
+                            <div className="form-group checkbox-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.use_one_time_password}
+                                        onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })}
+                                        disabled={loading}
+                                    />
+                                    <span>Ustaw hasło jednorazowe</span>
+                                </label>
+                            </div>
+
+                            {formData.use_one_time_password && (
+                                <div className="form-group">
+                                    <label>Hasło jednorazowe:</label>
+                                    <input
+                                        type="text"
+                                        value={formData.one_time_password}
+                                        onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })}
+                                        required
+                                        disabled={loading}
+                                        placeholder="Wprowadź hasło jednorazowe"
+                                    />
+                                </div>
+                            )}
+
+                            {formData.use_one_time_password && (
+                                <div className="modal-info">
+                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                </div>
+                            )}
+
                             <div className="modal-actions">
                                 <button type="submit" className="submit-btn" disabled={loading}>
                                     {loading ? 'Zapisywanie...' : 'Zapisz zmiany'}
@@ -392,23 +541,60 @@ const UserManagement = () => {
                     <div className="modal">
                         <h3>Resetuj hasło użytkownika: {resetPasswordData.username}</h3>
                         <form onSubmit={handleResetPassword}>
-                            <div className="form-group">
-                                <label>Nowe hasło:</label>
-                                <input
-                                    type="text"
-                                    value={resetPasswordData.newPassword}
-                                    onChange={(e) => setResetPasswordData({ ...resetPasswordData, newPassword: e.target.value })}
-                                    required
-                                    disabled={loading}
-                                    placeholder="Wprowadź nowe hasło"
-                                />
-                                <span className="help-text">Hasło musi spełniać wymagania systemowe</span>
+                            <div className="form-group checkbox-group">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={resetPasswordData.use_one_time_password}
+                                        onChange={(e) => setResetPasswordData({ 
+                                            ...resetPasswordData, 
+                                            use_one_time_password: e.target.checked 
+                                        })}
+                                        disabled={loading}
+                                    />
+                                    <span>Użyj hasła jednorazowego</span>
+                                </label>
                             </div>
+
+                            {!resetPasswordData.use_one_time_password && (
+                                <div className="form-group">
+                                    <label>Nowe hasło:</label>
+                                    <input
+                                        type="text"
+                                        value={resetPasswordData.newPassword}
+                                        onChange={(e) => setResetPasswordData({ ...resetPasswordData, newPassword: e.target.value })}
+                                        required
+                                        disabled={loading}
+                                        placeholder="Wprowadź nowe hasło"
+                                    />
+                                    <span className="help-text">Hasło musi spełniać wymagania systemowe</span>
+                                </div>
+                            )}
+
+                            {resetPasswordData.use_one_time_password && (
+                                <div className="form-group">
+                                    <label>Hasło jednorazowe:</label>
+                                    <input
+                                        type="text"
+                                        value={resetPasswordData.one_time_password}
+                                        onChange={(e) => setResetPasswordData({ ...resetPasswordData, one_time_password: e.target.value })}
+                                        required
+                                        disabled={loading}
+                                        placeholder="Wprowadź hasło jednorazowe"
+                                    />
+                                </div>
+                            )}
 
                             <div className="modal-info">
                                 <p><strong>Uwaga:</strong></p>
-                                <p>Użytkownik będzie musiał zmienić hasło przy następnym logowaniu.</p>
-                                <p>Nowe hasło musi spełniać wszystkie wymagania systemowe.</p>
+                                {resetPasswordData.use_one_time_password ? (
+                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                ) : (
+                                    <>
+                                        <p>Użytkownik będzie musiał zmienić hasło przy następnym logowaniu.</p>
+                                        <p>Nowe hasło musi spełniać wszystkie wymagania systemowe.</p>
+                                    </>
+                                )}
                             </div>
 
                             <div className="modal-actions">
@@ -419,7 +605,7 @@ const UserManagement = () => {
                                     type="button"
                                     onClick={() => {
                                         setShowResetPasswordModal(false);
-                                        setResetPasswordData({ userId: null, username: '', newPassword: 'User123!' });
+                                        setResetPasswordData({ userId: null, username: '', newPassword: 'User123!', use_one_time_password: false, one_time_password: '' });
                                     }}
                                     className="cancel-btn"
                                     disabled={loading}
