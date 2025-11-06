@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, updateUser, blockUser, deleteUser, resetUserPassword } from '../services/api';
+import OTPGenerator from './OTPGenerator';
 import { toast } from 'react-toastify';
 
 const UserManagement = () => {
@@ -59,14 +60,14 @@ const UserManagement = () => {
                 return;
             }
             const response = await createUser(payload);
-            
+
             if (response.otp) {
                 setOtpValue(response.otp);
                 toast.success('Użytkownik został utworzony z hasłem jednorazowym!');
             } else {
                 toast.success('Użytkownik został utworzony. Domyślne hasło: User123!');
             }
-            
+
             setShowAddModal(false);
             resetForm();
             fetchUsers();
@@ -100,14 +101,14 @@ const UserManagement = () => {
                 payload.one_time_password = formData.one_time_password;
             }
             const response = await updateUser(selectedUser.id, payload);
-            
+
             if (response.otp) {
                 setOtpValue(response.otp);
                 toast.success('Użytkownik zaktualizowany i ustawiono hasło jednorazowe');
             } else {
                 toast.success('Użytkownik został zaktualizowany');
             }
-            
+
             setShowEditModal(false);
             setSelectedUser(null);
             resetForm();
@@ -141,17 +142,17 @@ const UserManagement = () => {
                 resetPasswordData.userId,
                 payload
             );
-            
+
             if (response.otp) {
                 setOtpValue(response.otp);
                 toast.success(`Ustawiono hasło jednorazowe dla ${resetPasswordData.username}`);
             } else {
                 toast.success(`Hasło dla użytkownika ${resetPasswordData.username} zostało zresetowane`);
             }
-            
+
             setShowResetPasswordModal(false);
             setResetPasswordData({ userId: null, username: '', newPassword: 'User123!', use_one_time_password: false, one_time_password: '' });
-            fetchUsers();  // Refresh users to update OTP status
+            fetchUsers();
         } catch (error) {
             if (error.error) {
                 if (Array.isArray(error.error)) {
@@ -302,36 +303,10 @@ const UserManagement = () => {
                                 <td>{user.password_expiry_days === 0 ? 'Nigdy' : user.password_expiry_days}</td>
                                 <td>{formatDate(user.created_at)}</td>
                                 <td className="actions-cell">
-                                    <button
-                                        onClick={() => openEditModal(user)}
-                                        className="btn edit-btn"
-                                        title="Edytuj"
-                                    >
-                                        ✏️
-                                    </button>
-                                    <button
-                                        onClick={() => openResetPasswordModal(user)}
-                                        className="btn reset-password-btn"
-                                        title="Resetuj hasło"
-                                    >
-                                        🔑
-                                    </button>
-                                    <button
-                                        onClick={() => handleBlockUser(user.id, user.is_blocked)}
-                                        className={user.is_blocked ? 'btn unblock-btn' : 'btn block-btn'}
-                                        title={user.is_blocked ? 'Odblokuj' : 'Zablokuj'}
-                                    >
-                                        {user.is_blocked ? '🔓' : '🔒'}
-                                    </button>
-                                    {user.username !== 'ADMIN' && (
-                                        <button
-                                            onClick={() => handleDeleteUser(user.id, user.username)}
-                                            className="btn delete-btn"
-                                            title="Usuń"
-                                        >
-                                            🗑️
-                                        </button>
-                                    )}
+                                    <button onClick={() => openEditModal(user)} className="btn edit-btn" title="Edytuj">✏️</button>
+                                    <button onClick={() => openResetPasswordModal(user)} className="btn reset-password-btn" title="Resetuj hasło">🔑</button>
+                                    <button onClick={() => handleBlockUser(user.id, user.is_blocked)} className={user.is_blocked ? 'btn unblock-btn' : 'btn block-btn'} title={user.is_blocked ? 'Odblokuj' : 'Zablokuj'}>{user.is_blocked ? '🔓' : '🔒'}</button>
+                                    {user.username !== 'ADMIN' && <button onClick={() => handleDeleteUser(user.id, user.username)} className="btn delete-btn" title="Usuń">🗑️</button>}
                                 </td>
                             </tr>
                         ))}
@@ -346,79 +321,47 @@ const UserManagement = () => {
                         <form onSubmit={handleAddUser}>
                             <div className="form-group">
                                 <label>Login:</label>
-                                <input
-                                    type="text"
-                                    value={formData.username}
-                                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                                    required
-                                    disabled={loading}
-                                />
+                                <input type="text" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} required disabled={loading} />
                             </div>
 
                             <div className="form-group">
                                 <label>Imię i nazwisko:</label>
-                                <input
-                                    type="text"
-                                    value={formData.full_name}
-                                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                                    disabled={loading}
-                                />
+                                <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })} disabled={loading} />
                             </div>
 
                             <div className="form-group">
                                 <label>Ważność hasła (dni):</label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={formData.password_expiry_days}
-                                    onChange={(e) => setFormData({ ...formData, password_expiry_days: parseInt(e.target.value) })}
-                                    required
-                                    disabled={loading}
-                                />
+                                <input type="number" min="0" value={formData.password_expiry_days} onChange={(e) => setFormData({ ...formData, password_expiry_days: parseInt(e.target.value) })} required disabled={loading} />
                                 <span className="help-text">0 = hasło nigdy nie wygasa</span>
                             </div>
 
                             <div className="form-group checkbox-group">
                                 <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.is_admin === 1}
-                                        onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked ? 1 : 0 })}
-                                        disabled={loading}
-                                    />
+                                    <input type="checkbox" checked={formData.is_admin === 1} onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked ? 1 : 0 })} disabled={loading} />
                                     <span>Administrator</span>
                                 </label>
                             </div>
 
                             <div className="form-group checkbox-group">
                                 <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.use_one_time_password}
-                                        onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })}
-                                        disabled={loading}
-                                    />
+                                    <input type="checkbox" checked={formData.use_one_time_password} onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })} disabled={loading} />
                                     <span>Użyj hasła jednorazowego</span>
                                 </label>
                             </div>
 
                             {formData.use_one_time_password && (
-                                <div className="form-group">
-                                    <label>Hasło jednorazowe:</label>
-                                    <input
-                                        type="text"
-                                        value={formData.one_time_password}
-                                        onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })}
-                                        required
-                                        disabled={loading}
-                                        placeholder="Wprowadź hasło jednorazowe"
-                                    />
-                                </div>
+                                <>
+                                    <OTPGenerator onGenerate={(otp) => setFormData({ ...formData, one_time_password: otp })} />
+                                    <div className="form-group">
+                                        <label>Hasło jednorazowe:</label>
+                                        <input type="text" value={formData.one_time_password} onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })} required disabled placeholder="Zostanie wygenerowane" />
+                                    </div>
+                                </>
                             )}
 
                             <div className="modal-info">
                                 {formData.use_one_time_password ? (
-                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                    <p>Zostanie ustawione hasło jednorazowe z funkcji exp(-a*x). Użytkownik będzie musiał je zmienić przy logowaniu.</p>
                                 ) : (
                                     <>
                                         <p>Domyślne hasło: <strong>User123!</strong></p>
@@ -428,17 +371,8 @@ const UserManagement = () => {
                             </div>
 
                             <div className="modal-actions">
-                                <button type="submit" className="submit-btn" disabled={loading}>
-                                    {loading ? 'Dodawanie...' : 'Dodaj użytkownika'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowAddModal(false)}
-                                    className="cancel-btn"
-                                    disabled={loading}
-                                >
-                                    Anuluj
-                                </button>
+                                <button type="submit" className="submit-btn" disabled={loading}>{loading ? 'Dodawanie...' : 'Dodaj użytkownika'}</button>
+                                <button type="button" onClick={() => setShowAddModal(false)} className="cancel-btn" disabled={loading}>Anuluj</button>
                             </div>
                         </form>
                     </div>
@@ -452,84 +386,43 @@ const UserManagement = () => {
                         <form onSubmit={handleEditUser}>
                             <div className="form-group">
                                 <label>Login:</label>
-                                <input
-                                    type="text"
-                                    value={formData.username}
-                                    disabled
-                                    className="disabled-input"
-                                />
+                                <input type="text" value={formData.username} disabled className="disabled-input" />
                             </div>
 
                             <div className="form-group">
                                 <label>Imię i nazwisko:</label>
-                                <input
-                                    type="text"
-                                    value={formData.full_name}
-                                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
-                                    disabled={loading}
-                                />
+                                <input type="text" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })} disabled={loading} />
                             </div>
 
                             <div className="form-group">
                                 <label>Ważność hasła (dni):</label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={formData.password_expiry_days}
-                                    onChange={(e) => setFormData({ ...formData, password_expiry_days: parseInt(e.target.value) })}
-                                    required
-                                    disabled={loading}
-                                />
+                                <input type="number" min="0" value={formData.password_expiry_days} onChange={(e) => setFormData({ ...formData, password_expiry_days: parseInt(e.target.value) })} required disabled={loading} />
                                 <span className="help-text">0 = hasło nigdy nie wygasa</span>
                             </div>
 
                             <div className="form-group checkbox-group">
                                 <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={formData.use_one_time_password}
-                                        onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })}
-                                        disabled={loading}
-                                    />
+                                    <input type="checkbox" checked={formData.use_one_time_password} onChange={(e) => setFormData({ ...formData, use_one_time_password: e.target.checked })} disabled={loading} />
                                     <span>Ustaw hasło jednorazowe</span>
                                 </label>
                             </div>
 
                             {formData.use_one_time_password && (
-                                <div className="form-group">
-                                    <label>Hasło jednorazowe:</label>
-                                    <input
-                                        type="text"
-                                        value={formData.one_time_password}
-                                        onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })}
-                                        required
-                                        disabled={loading}
-                                        placeholder="Wprowadź hasło jednorazowe"
-                                    />
-                                </div>
-                            )}
-
-                            {formData.use_one_time_password && (
-                                <div className="modal-info">
-                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
-                                </div>
+                                <>
+                                    <OTPGenerator onGenerate={(otp) => setFormData({ ...formData, one_time_password: otp })} />
+                                    <div className="form-group">
+                                        <label>Hasło jednorazowe:</label>
+                                        <input type="text" value={formData.one_time_password} onChange={(e) => setFormData({ ...formData, one_time_password: e.target.value })} required disabled placeholder="Zostanie wygenerowane" />
+                                    </div>
+                                    <div className="modal-info">
+                                        <p>Zostanie ustawione hasło jednorazowe z funkcji exp(-a*x). Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                    </div>
+                                </>
                             )}
 
                             <div className="modal-actions">
-                                <button type="submit" className="submit-btn" disabled={loading}>
-                                    {loading ? 'Zapisywanie...' : 'Zapisz zmiany'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowEditModal(false);
-                                        setSelectedUser(null);
-                                    }}
-                                    className="cancel-btn"
-                                    disabled={loading}
-                                >
-                                    Anuluj
-                                </button>
+                                <button type="submit" className="submit-btn" disabled={loading}>{loading ? 'Zapisywanie...' : 'Zapisz zmiany'}</button>
+                                <button type="button" onClick={() => { setShowEditModal(false); setSelectedUser(null); }} className="cancel-btn" disabled={loading}>Anuluj</button>
                             </div>
                         </form>
                     </div>
@@ -543,15 +436,7 @@ const UserManagement = () => {
                         <form onSubmit={handleResetPassword}>
                             <div className="form-group checkbox-group">
                                 <label>
-                                    <input
-                                        type="checkbox"
-                                        checked={resetPasswordData.use_one_time_password}
-                                        onChange={(e) => setResetPasswordData({ 
-                                            ...resetPasswordData, 
-                                            use_one_time_password: e.target.checked 
-                                        })}
-                                        disabled={loading}
-                                    />
+                                    <input type="checkbox" checked={resetPasswordData.use_one_time_password} onChange={(e) => setResetPasswordData({ ...resetPasswordData, use_one_time_password: e.target.checked })} disabled={loading} />
                                     <span>Użyj hasła jednorazowego</span>
                                 </label>
                             </div>
@@ -559,36 +444,25 @@ const UserManagement = () => {
                             {!resetPasswordData.use_one_time_password && (
                                 <div className="form-group">
                                     <label>Nowe hasło:</label>
-                                    <input
-                                        type="text"
-                                        value={resetPasswordData.newPassword}
-                                        onChange={(e) => setResetPasswordData({ ...resetPasswordData, newPassword: e.target.value })}
-                                        required
-                                        disabled={loading}
-                                        placeholder="Wprowadź nowe hasło"
-                                    />
+                                    <input type="text" value={resetPasswordData.newPassword} onChange={(e) => setResetPasswordData({ ...resetPasswordData, newPassword: e.target.value })} required disabled={loading} placeholder="Wprowadź nowe hasło" />
                                     <span className="help-text">Hasło musi spełniać wymagania systemowe</span>
                                 </div>
                             )}
 
                             {resetPasswordData.use_one_time_password && (
-                                <div className="form-group">
-                                    <label>Hasło jednorazowe:</label>
-                                    <input
-                                        type="text"
-                                        value={resetPasswordData.one_time_password}
-                                        onChange={(e) => setResetPasswordData({ ...resetPasswordData, one_time_password: e.target.value })}
-                                        required
-                                        disabled={loading}
-                                        placeholder="Wprowadź hasło jednorazowe"
-                                    />
-                                </div>
+                                <>
+                                    <OTPGenerator onGenerate={(otp) => setResetPasswordData({ ...resetPasswordData, one_time_password: otp })} />
+                                    <div className="form-group">
+                                        <label>Hasło jednorazowe:</label>
+                                        <input type="text" value={resetPasswordData.one_time_password} onChange={(e) => setResetPasswordData({ ...resetPasswordData, one_time_password: e.target.value })} required disabled placeholder="Zostanie wygenerowane" />
+                                    </div>
+                                </>
                             )}
 
                             <div className="modal-info">
                                 <p><strong>Uwaga:</strong></p>
                                 {resetPasswordData.use_one_time_password ? (
-                                    <p>Zostanie ustawione podane hasło jednorazowe. Użytkownik będzie musiał je zmienić przy logowaniu.</p>
+                                    <p>Zostanie ustawione hasło jednorazowe z funkcji exp(-a*x). Użytkownik będzie musiał je zmienić przy logowaniu.</p>
                                 ) : (
                                     <>
                                         <p>Użytkownik będzie musiał zmienić hasło przy następnym logowaniu.</p>
@@ -598,20 +472,8 @@ const UserManagement = () => {
                             </div>
 
                             <div className="modal-actions">
-                                <button type="submit" className="submit-btn" disabled={loading}>
-                                    {loading ? 'Resetowanie...' : 'Resetuj hasło'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowResetPasswordModal(false);
-                                        setResetPasswordData({ userId: null, username: '', newPassword: 'User123!', use_one_time_password: false, one_time_password: '' });
-                                    }}
-                                    className="cancel-btn"
-                                    disabled={loading}
-                                >
-                                    Anuluj
-                                </button>
+                                <button type="submit" className="submit-btn" disabled={loading}>{loading ? 'Resetowanie...' : 'Resetuj hasło'}</button>
+                                <button type="button" onClick={() => { setShowResetPasswordModal(false); setResetPasswordData({ userId: null, username: '', newPassword: 'User123!', use_one_time_password: false, one_time_password: '' }); }} className="cancel-btn" disabled={loading}>Anuluj</button>
                             </div>
                         </form>
                     </div>

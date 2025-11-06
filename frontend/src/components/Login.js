@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login, isAuthenticated, isAdmin } from '../services/api';
+import { login, isAuthenticated, isAdmin, getCaptchaQuestion } from '../services/api';
 import { toast } from 'react-toastify';
 
 const Login = () => {
@@ -14,6 +14,11 @@ const Login = () => {
     const [loading, setLoading] = useState(false);
     const [otpRequired, setOtpRequired] = useState(false);
 
+    // CAPTCHA state
+    const [captchaQuestion, setCaptchaQuestion] = useState(null);
+    const [captchaAnswer, setCaptchaAnswer] = useState('');
+    const [loadingCaptcha, setLoadingCaptcha] = useState(true);
+
     useEffect(() => {
         if (isAuthenticated()) {
             if (isAdmin()) {
@@ -21,21 +26,47 @@ const Login = () => {
             } else {
                 navigate('/user');
             }
+        } else {
+            fetchCaptchaQuestion();
         }
     }, [navigate]);
 
+    const fetchCaptchaQuestion = async () => {
+        try {
+            const question = await getCaptchaQuestion();
+            setCaptchaQuestion(question);
+        } catch (error) {
+            console.error('Error fetching CAPTCHA:', error);
+            toast.error('Błąd podczas ładowania CAPTCHA');
+        } finally {
+            setLoadingCaptcha(false);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (!captchaAnswer.trim()) {
+            toast.error('Proszę odpowiedzieć na pytanie CAPTCHA');
+            return;
+        }
+
         setLoading(true);
 
         try {
-            let data = { username };
+            let data = {
+                username,
+                captcha_question_id: captchaQuestion?.id,
+                captcha_answer: captchaAnswer
+            };
+
             if (otpRequired) {
                 data.otp_answer = otpAnswer;
             } else {
                 data.password = password;
             }
-            const response = await login(data);  // Zakładając, że login przyjmuje obiekt data
+
+            const response = await login(data);
 
             if (response.requires_otp) {
                 setOtpRequired(true);
@@ -64,10 +95,24 @@ const Login = () => {
             } else {
                 toast.error('Błąd podczas logowania');
             }
+            // Odśwież pytanie CAPTCHA po błędzie
+            fetchCaptchaQuestion();
+            setCaptchaAnswer('');
         } finally {
             setLoading(false);
         }
     };
+
+    if (loadingCaptcha) {
+        return (
+            <div className="login-container">
+                <div className="login-box">
+                    <h1>Cyberbezpieczeństwo</h1>
+                    <p>Ładowanie...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="login-container">
@@ -128,6 +173,24 @@ const Login = () => {
                             />
                         </div>
                     )}
+
+                    {/* CAPTCHA */}
+                    <div className="form-group captcha-group">
+                        <label htmlFor="captcha">Weryfikacja CAPTCHA:</label>
+                        <div className="captcha-question">
+                            <strong>{captchaQuestion?.question}</strong>
+                        </div>
+                        <input
+                            type="text"
+                            id="captcha"
+                            value={captchaAnswer}
+                            onChange={(e) => setCaptchaAnswer(e.target.value)}
+                            required
+                            disabled={loading}
+                            placeholder="Wpisz odpowiedź"
+                            autoComplete="off"
+                        />
+                    </div>
 
                     <button type="submit" className="login-btn" disabled={loading}>
                         {loading ? 'Logowanie...' : 'Zaloguj się'}

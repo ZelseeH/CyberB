@@ -1,18 +1,22 @@
-import React, { useState, useEffect } from 'react';
+// UserPanel.js
+
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { logout, getCurrentUser, getTimeRemaining, getUserProfile } from '../services/api';
+import { getCurrentUser, getUserProfile } from '../services/api';
+import { useSessionTimeout } from '../hooks/useSessionTimeout';
+import SessionHeader from './SessionHeader';
 import ChangePassword from './ChangePassword';
 import { toast } from 'react-toastify';
 
 const UserPanel = () => {
     const navigate = useNavigate();
     const [currentUser, setCurrentUser] = useState(null);
-    const [timeRemaining, setTimeRemaining] = useState(900);
     const [activeTab, setActiveTab] = useState('profile');
     const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
     const [loading, setLoading] = useState(true);
+    const { timeRemaining } = useSessionTimeout();
 
-    useEffect(() => {
+    React.useEffect(() => {
         const user = getCurrentUser();
         if (!user) {
             navigate('/login');
@@ -20,20 +24,6 @@ const UserPanel = () => {
         }
 
         fetchUserProfile();
-
-        const timer = setInterval(() => {
-            const remaining = getTimeRemaining();
-            setTimeRemaining(remaining);
-
-            if (remaining <= 0) {
-                handleLogout();
-                toast.error('Sesja wygasła. Zaloguj się ponownie.');
-            } else if (remaining === 60) {
-                toast.warning('Zostało 1 minuta do automatycznego wylogowania!');
-            }
-        }, 1000);
-
-        return () => clearInterval(timer);
     }, [navigate]);
 
     const fetchUserProfile = async () => {
@@ -52,23 +42,6 @@ const UserPanel = () => {
         }
     };
 
-    const handleLogout = async () => {
-        try {
-            await logout();
-            navigate('/login');
-            toast.success('Wylogowano pomyślnie');
-        } catch (error) {
-            console.error('Logout error:', error);
-            navigate('/login');
-        }
-    };
-
-    const formatTime = (seconds) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
     const formatDate = (dateString) => {
         if (!dateString) return '-';
         const date = new Date(dateString);
@@ -81,22 +54,13 @@ const UserPanel = () => {
 
     return (
         <div className="admin-panel">
-            <header className="admin-header">
-                <div className="header-content">
-                    <h1>Panel Użytkownika</h1>
-                    <div className="header-info">
-                        <span className="user-info">
-                            Zalogowany: <strong>{currentUser?.username}</strong>
-                        </span>
-                        <span className="time-remaining">
-                            Czas sesji: <strong>{formatTime(timeRemaining)}</strong>
-                        </span>
-                        <button onClick={handleLogout} className="logout-btn">
-                            Wyloguj
-                        </button>
-                    </div>
-                </div>
-            </header>
+            <SessionHeader
+                title="Panel Użytkownika"
+                username={currentUser?.username}
+                fullName={currentUser?.full_name}
+                timeRemaining={timeRemaining}
+                isAdmin={false}
+            />
 
             <div className="admin-content">
                 <nav className="admin-nav">

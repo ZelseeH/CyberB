@@ -1,5 +1,9 @@
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Załaduj zmienne z pliku .env
+load_dotenv()
 
 
 class Config:
@@ -16,3 +20,11 @@ class Config:
         os.environ.get("JWT_SECRET_KEY") or "jwt-secret-key-change-in-production"
     )
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
+
+    # Google reCAPTCHA Configuration
+    RECAPTCHA_SITE_KEY = (
+        os.environ.get("RECAPTCHA_SITE_KEY") or "your-recaptcha-site-key"
+    )
+    RECAPTCHA_SECRET_KEY = (
+        os.environ.get("RECAPTCHA_SECRET_KEY") or "your-recaptcha-secret-key"
+    )

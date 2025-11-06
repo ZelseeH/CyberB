@@ -31,6 +31,10 @@ apiClient.interceptors.response.use(
             localStorage.removeItem('token');
             localStorage.removeItem('user');
             localStorage.removeItem('loginTime');
+            localStorage.removeItem('tokenExpiry');
+            localStorage.removeItem('idleTimeout');
+            localStorage.removeItem('lastActivityTime');
+            localStorage.removeItem('sessionWarningShown');
 
             if (window.location.pathname !== '/login') {
                 window.location.href = '/login';
@@ -39,6 +43,8 @@ apiClient.interceptors.response.use(
         return Promise.reject(error);
     }
 );
+
+// ===== Test =====
 
 export const testConnection = async () => {
     try {
@@ -49,14 +55,21 @@ export const testConnection = async () => {
     }
 };
 
+// ===== Login / Logout =====
+
 export const login = async (data) => {
     try {
         const response = await axios.post(`${API_BASE_URL}/login`, data);
 
         if (response.data.success) {
+            const now = Date.now();
             localStorage.setItem('token', response.data.token);
             localStorage.setItem('user', JSON.stringify(response.data.user));
-            localStorage.setItem('loginTime', Date.now().toString());
+            localStorage.setItem('loginTime', now.toString()); // ✅ Raz!
+            localStorage.setItem('tokenExpiry', (now + response.data.expires_in * 1000).toString());
+
+            const idleTimeout = response.data.idle_timeout_minutes || 15;
+            localStorage.setItem('idleTimeout', (idleTimeout * 60 * 1000).toString()); // ✅ W milisekundach!
         }
 
         return response.data;
@@ -64,6 +77,7 @@ export const login = async (data) => {
         throw error.response?.data || error;
     }
 };
+
 
 export const verifyToken = async () => {
     try {
@@ -77,26 +91,29 @@ export const verifyToken = async () => {
 export const logout = async () => {
     try {
         await apiClient.post('/logout');
-
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('loginTime');
-
-        return { success: true };
     } catch (error) {
+        console.error('Logout error:', error);
+    } finally {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         localStorage.removeItem('loginTime');
-        throw error.response?.data || error;
+        localStorage.removeItem('tokenExpiry');
+        localStorage.removeItem('idleTimeout');
+        localStorage.removeItem('lastActivityTime');
+        localStorage.removeItem('sessionWarningShown');
     }
+    return { success: true };
 };
 
-export const changePassword = async (userId, oldPassword, newPassword) => {
+// ===== Password Management =====
+
+export const changePassword = async (userId, oldPassword, newPassword, recaptchaToken) => {
     try {
         const response = await apiClient.post('/change-password', {
             user_id: userId,
             old_password: oldPassword,
             new_password: newPassword,
+            recaptcha_token: recaptchaToken,
         });
         return response.data;
     } catch (error) {
@@ -122,6 +139,8 @@ export const updatePasswordSettings = async (settings) => {
     }
 };
 
+// ===== System Settings =====
+
 export const getSystemSettings = async () => {
     try {
         const response = await apiClient.get('/system-settings');
@@ -139,6 +158,8 @@ export const updateSystemSettings = async (settings) => {
         throw error.response?.data || error;
     }
 };
+
+// ===== User Management =====
 
 export const getUsers = async () => {
     try {
@@ -187,23 +208,34 @@ export const deleteUser = async (userId) => {
     }
 };
 
+export const resetUserPassword = async (userId, data) => {
+    try {
+        const response = await apiClient.put(`/users/${userId}/reset-password`, data);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const getUserProfile = async () => {
+    try {
+        const response = await apiClient.get('/user/profile');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+// ===== Authentication Helpers - TYLKO LOCALSTORAGE =====
+
 export const isAuthenticated = () => {
     const token = localStorage.getItem('token');
-    const loginTime = localStorage.getItem('loginTime');
+    const tokenExpiry = localStorage.getItem('tokenExpiry');
 
-    if (!token || !loginTime) {
-        return false;
-    }
+    if (!token || !tokenExpiry) return false;
 
-    const elapsed = Date.now() - parseInt(loginTime);
-    if (elapsed > 900000) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('loginTime');
-        return false;
-    }
-
-    return true;
+    const remaining = parseInt(tokenExpiry) - Date.now();
+    return remaining > 0;
 };
 
 export const getCurrentUser = () => {
@@ -223,33 +255,67 @@ export const isAdmin = () => {
     return user && user.is_admin === 1;
 };
 
+// POBIERA CZAS Z LOCALSTORAGE - BEZ ŻADNYCH REQUESTÓW!
 export const getTimeRemaining = () => {
-    const loginTime = localStorage.getItem('loginTime');
-    if (!loginTime) return 0;
+    const tokenExpiry = localStorage.getItem('tokenExpiry');
+    if (!tokenExpiry) return 0;
 
-    const elapsed = Date.now() - parseInt(loginTime);
-    const remaining = 900000 - elapsed;
-
+    const remaining = parseInt(tokenExpiry) - Date.now();
     return remaining > 0 ? Math.floor(remaining / 1000) : 0;
 };
 
+// POBIERA IDLE TIMEOUT Z LOCALSTORAGE - BEZ ŻADNYCH REQUESTÓW!
+export const getIdleTimeout = () => {
+    const idleTimeout = localStorage.getItem('idleTimeout');
+    return idleTimeout ? parseInt(idleTimeout) : 15 * 60 * 1000;
+};
+
+// AKTUALIZUJE LAST ACTIVITY - BEZ ŻADNYCH REQUESTÓW!
+export const updateActivityTime = () => {
+    localStorage.setItem('lastActivityTime', Date.now().toString());
+};
+
+// ===== Logs =====
+
+export const getLogs = async () => {
+    try {
+        const response = await apiClient.get('/logs');
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+// ===== CAPTCHA Functions =====
+
+export const getCaptchaQuestion = async () => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/captcha/question`);
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const verifyCaptcha = async (questionId, answer) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/captcha/verify`, {
+            question_id: questionId,
+            answer: answer,
+        });
+        return response.data;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
+export const getRecaptchaSiteKey = async () => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/recaptcha/site-key`);
+        return response.data.site_key;
+    } catch (error) {
+        throw error.response?.data || error;
+    }
+};
+
 export default apiClient;
-
-export const resetUserPassword = async (userId, data) => {
-    try {
-        const response = await apiClient.put(`/users/${userId}/reset-password`, data);
-        return response.data;
-    } catch (error) {
-        throw error.response?.data || error;
-    }
-};
-
-
-export const getUserProfile = async () => {
-    try {
-        const response = await apiClient.get('/user/profile');
-        return response.data;
-    } catch (error) {
-        throw error.response?.data || error;
-    }
-};

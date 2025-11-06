@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { changePassword, getPasswordSettings } from '../services/api';
+// ChangePassword.js
+
+import React, { useState, useEffect, useRef } from 'react';
+import ReCAPTCHA from 'react-google-recaptcha';
+import { changePassword, getPasswordSettings, getRecaptchaSiteKey } from '../services/api';
 import { toast } from 'react-toastify';
 
 const ChangePassword = ({ currentUser, onSuccess }) => {
@@ -11,9 +14,13 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [passwordSettings, setPasswordSettings] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [recaptchaSiteKey, setRecaptchaSiteKey] = useState(null);
+    const [recaptchaToken, setRecaptchaToken] = useState(null);
+    const recaptchaRef = useRef(null);
 
     useEffect(() => {
         fetchPasswordSettings();
+        fetchRecaptchaSiteKey();
     }, []);
 
     const fetchPasswordSettings = async () => {
@@ -25,8 +32,26 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
         }
     };
 
+    const fetchRecaptchaSiteKey = async () => {
+        try {
+            const siteKey = await getRecaptchaSiteKey();
+            setRecaptchaSiteKey(siteKey);
+        } catch (error) {
+            console.error('Error fetching reCAPTCHA site key:', error);
+        }
+    };
+
+    const handleRecaptchaChange = (token) => {
+        setRecaptchaToken(token);
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        if (!recaptchaToken) {
+            toast.error('Proszę potwierdzić reCAPTCHA');
+            return;
+        }
 
         if (newPassword !== confirmPassword) {
             toast.error('Nowe hasła nie są identyczne');
@@ -41,11 +66,15 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
         setLoading(true);
 
         try {
-            await changePassword(currentUser.id, oldPassword, newPassword);
+            await changePassword(currentUser.id, oldPassword, newPassword, recaptchaToken);
             toast.success('Hasło zostało zmienione pomyślnie');
             setOldPassword('');
             setNewPassword('');
             setConfirmPassword('');
+            setRecaptchaToken(null);
+            if (recaptchaRef.current) {
+                recaptchaRef.current.reset();
+            }
 
             if (onSuccess) {
                 onSuccess();
@@ -59,6 +88,11 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
                 }
             } else {
                 toast.error('Błąd podczas zmiany hasła');
+            }
+            // Reset reCAPTCHA po błędzie
+            setRecaptchaToken(null);
+            if (recaptchaRef.current) {
+                recaptchaRef.current.reset();
             }
         } finally {
             setLoading(false);
@@ -155,7 +189,18 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
                     </div>
                 </div>
 
-                <button type="submit" className="submit-btn" disabled={loading}>
+                {/* Google reCAPTCHA */}
+                {recaptchaSiteKey && recaptchaSiteKey !== 'your-recaptcha-site-key' && (
+                    <div className="form-group recaptcha-group">
+                        <ReCAPTCHA
+                            ref={recaptchaRef}
+                            sitekey={recaptchaSiteKey}
+                            onChange={handleRecaptchaChange}
+                        />
+                    </div>
+                )}
+
+                <button type="submit" className="submit-btn" disabled={loading || !recaptchaToken}>
                     {loading ? 'Zmieniam hasło...' : 'Zmień hasło'}
                 </button>
             </form>

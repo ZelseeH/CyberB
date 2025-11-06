@@ -1,18 +1,24 @@
-# app.py
-
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import Config
-from models import db, User, PasswordSettings, PasswordHistory, SystemSettings
+from models import (
+    db,
+    User,
+    PasswordSettings,
+    PasswordHistory,
+    SystemSettings,
+    CaptchaQuestion,
+    Log,
+)
 import re
 import jwt
+import requests
+import random
 from datetime import datetime, timedelta
 from functools import wraps
-from models import db, User, PasswordSettings, PasswordHistory, Log, SystemSettings
 
 app = Flask(__name__)
 app.config.from_object(Config)
-
 db.init_app(app)
 CORS(app)
 
@@ -37,29 +43,37 @@ def generate_token(user_id, username, is_admin):
 
 
 def verify_token(token):
-    """Weryfikuje JWT token"""
     try:
         payload = jwt.decode(token, app.config["JWT_SECRET_KEY"], algorithms=["HS256"])
         return payload
-    except jwt.ExpiredSignatureError:
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         return None
-    except jwt.InvalidTokenError:
-        return None
+
+
+def verify_recaptcha(token):
+    secret_key = app.config.get("RECAPTCHA_SECRET_KEY")
+    if not secret_key or secret_key == "your-recaptcha-secret-key":
+        return True
+    try:
+        response = requests.post(
+            "https://www.google.com/recaptcha/api/siteverify",
+            data={"secret": secret_key, "response": token},
+            timeout=5,
+        )
+        return response.json().get("success", False)
+    except Exception as e:
+        print(f"reCAPTCHA error: {str(e)}")
+        return False
 
 
 def token_required(f):
-    """Dekorator wymagający ważnego tokenu"""
-
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get("Authorization")
-
         if not token:
             return jsonify({"error": "Brak tokenu autoryzacyjnego"}), 401
-
         if token.startswith("Bearer "):
             token = token[7:]
-
         payload = verify_token(token)
         if not payload:
             return (
@@ -70,29 +84,22 @@ def token_required(f):
                 ),
                 401,
             )
-
         user = User.query.get(payload["user_id"])
         if not user or user.is_blocked:
             return jsonify({"error": "Użytkownik nieaktywny lub zablokowany"}), 401
-
         return f(payload["user_id"], *args, **kwargs)
 
     return decorated
 
 
 def admin_required(f):
-    """Dekorator wymagający uprawnień administratora"""
-
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get("Authorization")
-
         if not token:
             return jsonify({"error": "Brak tokenu autoryzacyjnego"}), 401
-
         if token.startswith("Bearer "):
             token = token[7:]
-
         payload = verify_token(token)
         if not payload:
             return (
@@ -103,50 +110,91 @@ def admin_required(f):
                 ),
                 401,
             )
-
         if not payload.get("is_admin"):
             return jsonify({"error": "Brak uprawnień administratora"}), 403
-
         user = User.query.get(payload["user_id"])
         if not user or user.is_blocked:
             return jsonify({"error": "Użytkownik nieaktywny lub zablokowany"}), 401
-
         return f(*args, **kwargs)
 
     return decorated
 
 
 def validate_password(password, settings=None):
-    """Walidacja hasła według ustawień"""
     if settings is None:
         settings = PasswordSettings.query.first()
-
     errors = []
-
     if len(password) < settings.min_length:
         errors.append(f"Hasło musi mieć co najmniej {settings.min_length} znaków")
-
     if settings.require_capital_letter == 1 and not re.search(r"[A-Z]", password):
         errors.append("Hasło musi zawierać co najmniej jedną wielką literę")
-
     if settings.require_special_char == 1 and not re.search(
         r'[!@#$%^&*(),.?":{}|<>]', password
     ):
         errors.append("Hasło musi zawierać co najmniej jeden znak specjalny")
-
     if settings.require_digits > 0:
         digits = len(re.findall(r"\d", password))
         if digits < settings.require_digits:
             errors.append(
                 f"Hasło musi zawierać co najmniej {settings.require_digits} cyfr(y)"
             )
-
     return errors
+
+
+def log_action(username, action_type, description=None, ip_address=None):
+    try:
+        log_entry = Log(
+            username=username,
+            action_type=action_type,
+            description=description,
+            ip_address=ip_address,
+        )
+        db.session.add(log_entry)
+        db.session.commit()
+    except Exception as e:
+        print(f"Error logging: {str(e)}")
+        db.session.rollback()
+
+
+def get_admin_from_token(token):
+    token = token.replace("Bearer ", "")
+    payload = verify_token(token)
+    return User.query.get(payload["user_id"]) if payload else None
 
 
 @app.route("/api/test", methods=["GET"])
 def test():
     return jsonify({"message": "Backend działa!", "status": "OK"})
+
+
+@app.route("/api/captcha/question", methods=["GET"])
+def get_captcha_question():
+    questions = CaptchaQuestion.query.filter_by(is_active=True).all()
+    if not questions:
+        return jsonify({"id": 0, "question": "Co jest stolicą Wielkiej Brytanii?"})
+    question = random.choice(questions)
+    return jsonify(question.to_dict())
+
+
+@app.route("/api/captcha/verify", methods=["POST"])
+def verify_captcha():
+    data = request.get_json()
+    question_id = data.get("question_id")
+    user_answer = data.get("answer", "").strip().lower()
+    if question_id == 0:
+        is_correct = user_answer == "londyn"
+    else:
+        question = CaptchaQuestion.query.get(question_id)
+        if not question:
+            return jsonify({"error": "Nieprawidłowe pytanie CAPTCHA"}), 400
+        is_correct = user_answer == question.answer.strip().lower()
+    return jsonify({"valid": is_correct})
+
+
+@app.route("/api/recaptcha/site-key", methods=["GET"])
+def get_recaptcha_site_key():
+    site_key = app.config.get("RECAPTCHA_SITE_KEY", "your-recaptcha-site-key")
+    return jsonify({"site_key": site_key})
 
 
 @app.route("/api/login", methods=["POST"])
@@ -155,46 +203,54 @@ def login():
     username = data.get("username")
     password = data.get("password")
     otp_answer = data.get("otp_answer")
+    captcha_question_id = data.get("captcha_question_id")
+    captcha_answer = data.get("captcha_answer")
     ip_address = request.remote_addr
 
-    user = User.query.filter_by(username=username).first()
+    if captcha_question_id is not None and captcha_answer is not None:
+        user_answer = captcha_answer.strip().lower()
+        if captcha_question_id == 0:
+            if user_answer != "londyn":
+                log_action(
+                    username or "unknown", "login_failed", "Invalid CAPTCHA", ip_address
+                )
+                return jsonify({"error": "Nieprawidłowa odpowiedź CAPTCHA"}), 401
+        else:
+            question = CaptchaQuestion.query.get(captcha_question_id)
+            if not question or user_answer != question.answer.strip().lower():
+                log_action(
+                    username or "unknown", "login_failed", "Invalid CAPTCHA", ip_address
+                )
+                return jsonify({"error": "Nieprawidłowa odpowiedź CAPTCHA"}), 401
 
+    user = User.query.filter_by(username=username).first()
     if not user:
         log_action(username or "unknown", "login_failed", "User not found", ip_address)
         return jsonify({"error": "Login lub Hasło niepoprawny"}), 401
-
     if user.is_blocked:
         log_action(username, "login_failed", "Account blocked", ip_address)
         return jsonify({"error": "Konto zablokowane"}), 403
-
     if user.is_locked_out():
         log_action(username, "login_failed", "Account locked out", ip_address)
-        return jsonify({"error": "Konto tymczasowo zablokowane. Spróbuj ponownie za 15 minut."}), 403
+        return (
+            jsonify(
+                {"error": "Konto tymczasowo zablokowane. Spróbuj ponownie za 15 minut."}
+            ),
+            403,
+        )
 
-    # Sprawdź czy użytkownik ma włączone hasło jednorazowe
     if user.one_time_password_enabled:
         if not otp_answer:
-            # Zwróć informację o potrzebie OTP
-            return jsonify({
-                "requires_otp": True
-            })
-        
-        # Weryfikuj odpowiedź hasła jednorazowego
+            return jsonify({"requires_otp": True})
         if not user.verify_one_time_password(otp_answer):
             user.record_failed_attempt()
             log_action(username, "login_failed", "Invalid OTP answer", ip_address)
             return jsonify({"error": "Niepoprawna odpowiedź hasła jednorazowego"}), 401
-        
-        # Po poprawnym użyciu hasła jednorazowego, wyłącz je
         user.disable_one_time_password()
         user.reset_failed_attempts()
-        db.session.commit()
-        
-        # Wymuś zmianę hasła po użyciu OTP
         user.must_change_password = 1
         db.session.commit()
     else:
-        # Standardowa weryfikacja hasła
         if not user.check_password(password):
             user.record_failed_attempt()
             log_action(username, "login_failed", "Invalid password", ip_address)
@@ -203,33 +259,37 @@ def login():
 
     password_expired = user.is_password_expired()
     token = generate_token(user.id, user.username, user.is_admin)
-    
     log_action(username, "login_success", None, ip_address)
 
-    return jsonify({
-        "success": True,
-        "token": token,
-        "expires_in": 900,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "full_name": user.full_name,
-            "is_admin": user.is_admin,
-            "must_change_password": user.must_change_password or password_expired,
-            "password_expired": password_expired,
-        },
-    })
+    system_settings = SystemSettings.query.first()
+    idle_timeout_minutes = (
+        system_settings.idle_timeout_minutes if system_settings else 15
+    )
+
+    return jsonify(
+        {
+            "success": True,
+            "token": token,
+            "expires_in": 900,
+            "idle_timeout_minutes": idle_timeout_minutes,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "is_admin": user.is_admin,
+                "must_change_password": user.must_change_password or password_expired,
+                "password_expired": password_expired,
+            },
+        }
+    )
 
 
 @app.route("/api/verify-token", methods=["GET"])
 @token_required
 def verify_token_endpoint(current_user_id):
-    """Sprawdza czy token jest ważny"""
     user = User.query.get(current_user_id)
-
     if not user or user.is_blocked:
         return jsonify({"error": "Użytkownik nieaktywny"}), 401
-
     return jsonify({"valid": True, "user": user.to_dict()})
 
 
@@ -237,10 +297,8 @@ def verify_token_endpoint(current_user_id):
 @token_required
 def get_user_profile(current_user_id):
     user = User.query.get(current_user_id)
-
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
-
     return jsonify(
         {
             "id": user.id,
@@ -263,9 +321,10 @@ def get_user_profile(current_user_id):
 @app.route("/api/logout", methods=["POST"])
 @token_required
 def logout(current_user_id):
-    """Wylogowanie - token jest usuwany po stronie frontendu"""
     user = User.query.get(current_user_id)
-    log_action(user.username if user else "unknown", "logout", None, request.remote_addr)
+    log_action(
+        user.username if user else "unknown", "logout", None, request.remote_addr
+    )
     return jsonify({"success": True, "message": "Wylogowano pomyślnie"})
 
 
@@ -276,41 +335,74 @@ def change_password(current_user_id):
     user_id = data.get("user_id")
     old_password = data.get("old_password")
     new_password = data.get("new_password")
+    recaptcha_token = data.get("recaptcha_token")
+
+    if recaptcha_token:
+        if not verify_recaptcha(recaptcha_token):
+            log_action(
+                "unknown",
+                "password_change_failed",
+                "Invalid reCAPTCHA",
+                request.remote_addr,
+            )
+            return (
+                jsonify(
+                    {"error": "Nieprawidłowa weryfikacja reCAPTCHA. Spróbuj ponownie."}
+                ),
+                401,
+            )
+    else:
+        return jsonify({"error": "Wymagana weryfikacja reCAPTCHA"}), 400
 
     user = User.query.get(user_id)
-
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
-
     if current_user_id != user_id:
-        return jsonify({"error": "Brak uprawnień do zmiany hasła tego użytkownika"}), 403
+        return (
+            jsonify({"error": "Brak uprawnień do zmiany hasła tego użytkownika"}),
+            403,
+        )
 
     if not (user.must_change_password and user.reset_with_otp):
         if not user.check_password(old_password):
-            log_action(user.username, "password_changed", "Failed - incorrect old password", request.remote_addr)
+            log_action(
+                user.username,
+                "password_changed",
+                "Failed - incorrect old password",
+                request.remote_addr,
+            )
             return jsonify({"error": "Stare hasło niepoprawne"}), 401
 
     errors = validate_password(new_password)
     if errors:
         return jsonify({"error": errors}), 400
-
     if user.check_password_in_history(new_password):
-        log_action(user.username, "password_changed", "Failed - password reused", request.remote_addr)
+        log_action(
+            user.username,
+            "password_changed",
+            "Failed - password reused",
+            request.remote_addr,
+        )
         return jsonify({"error": "To hasło było już używane. Wybierz nowe hasło."}), 400
 
     if user.password_hash is not None:
-        history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
+        history_entry = PasswordHistory(
+            user_id=user.id, password_hash=user.password_hash
+        )
         db.session.add(history_entry)
 
     user.set_password(new_password)
     user.last_password_change = datetime.utcnow()
     user.must_change_password = 0
     user.reset_with_otp = False
-
     db.session.commit()
-    
-    log_action(user.username, "password_changed", "Password changed successfully", request.remote_addr)
 
+    log_action(
+        user.username,
+        "password_changed",
+        "Password changed successfully",
+        request.remote_addr,
+    )
     return jsonify({"success": True, "message": "Hasło zmienione pomyślnie"})
 
 
@@ -326,10 +418,7 @@ def get_password_settings(current_user_id):
 def update_password_settings():
     data = request.get_json()
     settings = PasswordSettings.query.first()
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not settings:
         settings = PasswordSettings()
@@ -339,16 +428,14 @@ def update_password_settings():
     settings.require_capital_letter = data.get("require_capital_letter", 1)
     settings.require_special_char = data.get("require_special_char", 1)
     settings.require_digits = data.get("require_digits", 1)
-
     db.session.commit()
-    
+
     log_action(
         admin_user.username if admin_user else "ADMIN",
         "password_settings_updated",
-        f"Updated password settings",
-        request.remote_addr
+        "Updated password settings",
+        request.remote_addr,
     )
-
     return jsonify({"success": True, "message": "Ustawienia zaktualizowane"})
 
 
@@ -364,10 +451,7 @@ def get_system_settings(current_user_id):
 def update_system_settings():
     data = request.get_json()
     settings = SystemSettings.query.first()
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not settings:
         settings = SystemSettings()
@@ -375,16 +459,14 @@ def update_system_settings():
 
     settings.failed_login_limit = data.get("failed_login_limit", 5)
     settings.idle_timeout_minutes = data.get("idle_timeout_minutes", 15)
-
     db.session.commit()
-    
+
     log_action(
         admin_user.username if admin_user else "ADMIN",
         "system_settings_updated",
-        f"Updated system settings",
-        request.remote_addr
+        "Updated system settings",
+        request.remote_addr,
     )
-
     return jsonify({"success": True, "message": "Ustawienia zaktualizowane"})
 
 
@@ -399,10 +481,7 @@ def get_users():
 @admin_required
 def create_user():
     data = request.get_json()
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     existing_user = User.query.filter_by(username=data["username"]).first()
     if existing_user:
@@ -415,40 +494,35 @@ def create_user():
         password_expiry_days=data.get("password_expiry_days", 90),
         must_change_password=1,
     )
-    
+
     use_otp = data.get("use_one_time_password", False)
-    # Sprawdź czy włączyć hasło jednorazowe
     if use_otp:
         otp = data.get("one_time_password")
         if not otp:
             return jsonify({"error": "Hasło jednorazowe jest wymagane"}), 400
         new_user.set_one_time_password(otp)
         new_user.password_hash = None
-        message = f"Użytkownik utworzony z hasłem jednorazowym"
     else:
         new_user.set_password("User123!")
-        new_user.reset_with_otp = False
-        message = "Użytkownik utworzony. Domyślne hasło: User123!"
 
     db.session.add(new_user)
     db.session.commit()
-    
+
     log_action(
         admin_user.username if admin_user else "ADMIN",
         "user_created",
-        f"Created user: {new_user.username}" + (" with OTP" if new_user.one_time_password_enabled else ""),
-        request.remote_addr
+        f"Created user: {new_user.username}" + (" with OTP" if use_otp else ""),
+        request.remote_addr,
     )
 
     response_data = {
         "success": True,
         "user_id": new_user.id,
-        "message": message,
+        "message": "Użytkownik utworzony",
     }
-    
     if use_otp:
         response_data["otp"] = otp
-    
+
     return jsonify(response_data), 201
 
 
@@ -457,19 +531,17 @@ def create_user():
 def update_user(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
 
     user.full_name = data.get("full_name", user.full_name)
-    user.password_expiry_days = data.get("password_expiry_days", user.password_expiry_days)
-    
+    user.password_expiry_days = data.get(
+        "password_expiry_days", user.password_expiry_days
+    )
+
     use_otp = data.get("use_one_time_password", False)
-    # Sprawdź czy włączyć hasło jednorazowe
     if use_otp:
         otp = data.get("one_time_password")
         if not otp:
@@ -479,19 +551,18 @@ def update_user(user_id):
         user.must_change_password = 1
 
     db.session.commit()
-    
+
     log_action(
         admin_user.username if admin_user else "ADMIN",
         "user_updated",
-        f"Updated user: {user.username}" + (" - OTP enabled" if use_otp else ""),
-        request.remote_addr
+        f"Updated user: {user.username}",
+        request.remote_addr,
     )
 
     response_data = {"success": True, "message": "Użytkownik zaktualizowany"}
-    
     if use_otp:
         response_data["otp"] = otp
-    
+
     return jsonify(response_data)
 
 
@@ -500,10 +571,7 @@ def update_user(user_id):
 def block_user(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
@@ -512,15 +580,13 @@ def block_user(user_id):
     db.session.commit()
 
     status = "zablokowany" if user.is_blocked else "odblokowany"
-    action_type = "user_blocked" if user.is_blocked else "user_unblocked"
-    
     log_action(
         admin_user.username if admin_user else "ADMIN",
-        action_type,
+        "user_blocked" if user.is_blocked else "user_unblocked",
         f"User {user.username} {status}",
-        request.remote_addr
+        request.remote_addr,
     )
-    
+
     return jsonify({"success": True, "message": f"Użytkownik {status}"})
 
 
@@ -528,28 +594,23 @@ def block_user(user_id):
 @admin_required
 def delete_user(user_id):
     user = User.query.get(user_id)
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
-
     if user.username == "ADMIN":
         return jsonify({"error": "Nie można usunąć konta administratora"}), 403
 
     username = user.username
     db.session.delete(user)
     db.session.commit()
-    
+
     log_action(
         admin_user.username if admin_user else "ADMIN",
         "user_deleted",
         f"Deleted user: {username}",
-        request.remote_addr
+        request.remote_addr,
     )
-
     return jsonify({"success": True, "message": "Użytkownik usunięty"})
 
 
@@ -558,18 +619,14 @@ def delete_user(user_id):
 def reset_user_password(user_id):
     data = request.get_json()
     user = User.query.get(user_id)
-    
-    token = request.headers.get("Authorization", "").replace("Bearer ", "")
-    payload = verify_token(token)
-    admin_user = User.query.get(payload["user_id"]) if payload else None
+    admin_user = get_admin_from_token(request.headers.get("Authorization", ""))
 
     if not user:
         return jsonify({"error": "Użytkownik nie istnieje"}), 404
 
     use_otp = data.get("use_one_time_password", False)
-    
+
     if use_otp:
-        # Ustaw hasło jednorazowe
         otp = data.get("one_time_password")
         if not otp:
             return jsonify({"error": "Hasło jednorazowe jest wymagane"}), 400
@@ -577,71 +634,46 @@ def reset_user_password(user_id):
         user.password_hash = None
         user.last_password_change = datetime.utcnow()
         user.must_change_password = 1
-        
         db.session.commit()
-        
         log_action(
             admin_user.username if admin_user else "ADMIN",
             "password_reset",
             f"Generated OTP for user: {user.username}",
-            request.remote_addr
+            request.remote_addr,
         )
-        
-        return jsonify({
-            "success": True,
-            "message": "Wygenerowano hasło jednorazowe",
-            "otp": otp
-        })
+        return jsonify(
+            {"success": True, "message": "Wygenerowano hasło jednorazowe", "otp": otp}
+        )
     else:
-        # Standardowy reset hasła
         new_password = data.get("new_password", "User123!")
-        
         errors = validate_password(new_password)
         if errors:
             return jsonify({"error": errors}), 400
-
         if user.password_hash is not None:
-            history_entry = PasswordHistory(user_id=user.id, password_hash=user.password_hash)
+            history_entry = PasswordHistory(
+                user_id=user.id, password_hash=user.password_hash
+            )
             db.session.add(history_entry)
-
         user.set_password(new_password)
         user.last_password_change = datetime.utcnow()
         user.must_change_password = 1
-        user.disable_one_time_password()  # Wyłącz OTP jeśli było włączone
+        user.disable_one_time_password()
         user.reset_with_otp = False
-
         db.session.commit()
-        
         log_action(
             admin_user.username if admin_user else "ADMIN",
             "password_reset",
             f"Reset password for user: {user.username}",
-            request.remote_addr
+            request.remote_addr,
         )
-
-        return jsonify({"success": True, "message": "Hasło użytkownika zostało zresetowane"})
-
-
-def log_action(username, action_type, description=None, ip_address=None):
-    """Zapisuje akcję użytkownika w logach"""
-    try:
-        log_entry = Log(
-            username=username,
-            action_type=action_type,
-            description=description,
-            ip_address=ip_address
+        return jsonify(
+            {"success": True, "message": "Hasło użytkownika zostało zresetowane"}
         )
-        db.session.add(log_entry)
-        db.session.commit()
-    except Exception as e:
-        print(f"Error logging action: {str(e)}")
-        db.session.rollback()
 
 
 @app.route("/api/logs", methods=["GET"])
 @admin_required
 def get_logs():
-    """Pobiera wszystkie logi systemowe"""
     try:
         logs = Log.query.order_by(Log.created_at.desc()).all()
         return jsonify([log.to_dict() for log in logs])
