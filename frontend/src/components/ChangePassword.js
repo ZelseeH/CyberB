@@ -18,6 +18,9 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
     const [recaptchaToken, setRecaptchaToken] = useState(null);
     const recaptchaRef = useRef(null);
 
+    // TO JEST POPRAWNE MIEJSCE DLA TEJ ZMIENNEJ (wewnątrz funkcji, po deklaracji state)
+    const isCaptchaActive = recaptchaSiteKey && recaptchaSiteKey !== 'your-recaptcha-site-key';
+
     useEffect(() => {
         fetchPasswordSettings();
         fetchRecaptchaSiteKey();
@@ -48,7 +51,8 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!recaptchaToken) {
+        // Sprawdzamy token tylko jeśli CAPTCHA jest faktycznie aktywna
+        if (isCaptchaActive && !recaptchaToken) {
             toast.error('Proszę potwierdzić reCAPTCHA');
             return;
         }
@@ -189,8 +193,8 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
                     </div>
                 </div>
 
-                {/* Google reCAPTCHA */}
-                {recaptchaSiteKey && recaptchaSiteKey !== 'your-recaptcha-site-key' && (
+                {/* Wyświetlamy ReCAPTCHA tylko jeśli klucz jest poprawny */}
+                {isCaptchaActive && (
                     <div className="form-group recaptcha-group">
                         <ReCAPTCHA
                             ref={recaptchaRef}
@@ -200,7 +204,11 @@ const ChangePassword = ({ currentUser, onSuccess }) => {
                     </div>
                 )}
 
-                <button type="submit" className="submit-btn" disabled={loading || !recaptchaToken}>
+                <button 
+                    type="submit" 
+                    className="submit-btn" 
+                    disabled={loading || (isCaptchaActive && !recaptchaToken)}
+                >
                     {loading ? 'Zmieniam hasło...' : 'Zmień hasło'}
                 </button>
             </form>
