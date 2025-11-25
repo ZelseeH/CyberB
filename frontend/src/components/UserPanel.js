@@ -14,7 +14,6 @@ const UserPanel = () => {
     const [loading, setLoading] = useState(true);
     const { timeRemaining } = useSessionTimeout();
 
-    // --- STANY DLA MENEDŻERA PLIKÓW ---
     const [isFullVersion, setIsFullVersion] = useState(false);
     const [unlockKey, setUnlockKey] = useState("");
     const [uploadStatus, setUploadStatus] = useState("");
@@ -53,17 +52,14 @@ const UserPanel = () => {
         return date.toLocaleString('pl-PL');
     };
 
-    // 1. Sprawdzenie licencji
-    // Uwaga: Korzystamy z credentials: 'include', aby ciasteczko sesyjne Flask było przesyłane
     const checkLicenseStatus = async () => {
         try {
             const response = await fetch('http://localhost:5000/api/check-license', {
                 method: 'GET',
                 headers: { 'Content-Type': 'application/json' },
-                // Ważne: credentials pozwala na przesyłanie cookies sesyjnych między localhost:3000 a 5000
-                // Wymaga odpowiedniego CORS na backendzie
+                credentials: 'include'
             });
-            if(response.ok) {
+            if (response.ok) {
                 const data = await response.json();
                 setIsFullVersion(data.is_full_version);
             }
@@ -72,16 +68,16 @@ const UserPanel = () => {
         }
     };
 
-    // 2. Odblokowanie licencji
     const handleUnlock = async () => {
         try {
             const response = await fetch('http://localhost:5000/api/unlock-license', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify({ key: unlockKey })
             });
             const data = await response.json();
-            
+
             if (data.success) {
                 setIsFullVersion(true);
                 toast.success(data.message);
@@ -95,19 +91,16 @@ const UserPanel = () => {
         }
     };
 
-    // 3. Wgrywanie pliku
     const handleFileUpload = async () => {
         if (!selectedFile) {
             toast.error("Wybierz plik przed wysłaniem.");
             return;
         }
 
-        // Frontend check
         const MAX_BYTES = 100 * 1024;
         if (!isFullVersion && selectedFile.size > MAX_BYTES) {
             const sizeKB = (selectedFile.size / 1024).toFixed(2);
             toast.warning(`WERSJA DEMO: Plik ma ${sizeKB} KB (Limit: 100 KB). Odblokuj program.`);
-            // Możemy zablokować wysłanie tutaj, ale backend też to sprawdza
         }
 
         const formData = new FormData();
@@ -118,7 +111,7 @@ const UserPanel = () => {
         try {
             const response = await fetch('http://localhost:5000/api/upload-file', {
                 method: 'POST',
-                // Nie ustawiamy Content-Type ręcznie przy FormData, przeglądarka ustawi boundary
+                credentials: 'include',
                 body: formData
             });
             const data = await response.json();
@@ -126,9 +119,8 @@ const UserPanel = () => {
             if (response.ok) {
                 setUploadStatus(`Sukces: ${data.message}`);
                 toast.success("Plik wgrany pomyślnie!");
-                setSelectedFile(null); // Reset stanu pliku
-                // Reset inputa w DOM (trick z kluczem lub ref, tu uproszczony przez ponowne renderowanie inputa)
-                document.getElementById('fileInput').value = ""; 
+                setSelectedFile(null);
+                document.getElementById('fileInput').value = "";
             } else {
                 if (data.error === "DEMOWARE_LIMIT") {
                     toast.error("Błąd licencji: Plik za duży dla wersji DEMO.");
@@ -178,25 +170,44 @@ const UserPanel = () => {
                     {activeTab === 'profile' && (
                         <div className="user-profile">
                             <h2>Informacje o koncie</h2>
+
                             <div className="profile-info-card">
                                 <div className="profile-row">
                                     <span className="profile-label">Login:</span>
                                     <span className="profile-value">{currentUser?.username}</span>
                                 </div>
+
                                 <div className="profile-row">
                                     <span className="profile-label">Imię i nazwisko:</span>
                                     <span className="profile-value">{currentUser?.full_name || '-'}</span>
                                 </div>
+
                                 <div className="profile-row">
                                     <span className="profile-label">Rola:</span>
                                     <span className="profile-value">
                                         {currentUser?.is_admin === 1 ? 'Administrator' : 'Użytkownik'}
                                     </span>
                                 </div>
+
                                 <div className="profile-row">
                                     <span className="profile-label">Data utworzenia:</span>
                                     <span className="profile-value">{formatDate(currentUser?.created_at)}</span>
                                 </div>
+
+                                <div className="profile-row">
+                                    <span className="profile-label">Ostatnia zmiana hasła:</span>
+                                    <span className="profile-value">{formatDate(currentUser?.last_password_change)}</span>
+                                </div>
+
+                                <div className="profile-row">
+                                    <span className="profile-label">Ważność hasła:</span>
+                                    <span className="profile-value">
+                                        {currentUser?.password_expiry_days === 0
+                                            ? 'Hasło nie wygasa'
+                                            : `${currentUser?.password_expiry_days} dni`}
+                                    </span>
+                                </div>
+
                                 <div className="profile-row">
                                     <span className="profile-label">Zmiana hasła:</span>
                                     <span className="profile-value">
@@ -217,44 +228,43 @@ const UserPanel = () => {
                     {activeTab === 'files' && (
                         <div className="user-profile">
                             <h2>Menedżer Plików</h2>
-                            
-                            {/* STATUS LICENCJI */}
-                            <div className={`profile-info-card license-card ${isFullVersion ? 'full' : 'demo'}`} 
-                                 style={{
-                                     borderLeft: isFullVersion ? '5px solid #28a745' : '5px solid #dc3545',
-                                     marginBottom: '20px'
-                                 }}>
+
+                            <div className={`profile-info-card license-card ${isFullVersion ? 'full' : 'demo'}`}
+                                style={{
+                                    borderLeft: isFullVersion ? '5px solid #28a745' : '5px solid #dc3545',
+                                    marginBottom: '20px'
+                                }}>
                                 <h3>
                                     Status Licencji: {' '}
-                                    {isFullVersion ? 
-                                        <span style={{color: '#28a745', fontWeight: 'bold'}}>PEŁNA WERSJA (PREMIUM)</span> : 
-                                        <span style={{color: '#dc3545', fontWeight: 'bold'}}>DEMO (Limit 100 KB)</span>
+                                    {isFullVersion ?
+                                        <span style={{ color: '#28a745', fontWeight: 'bold' }}>PEŁNA WERSJA (PREMIUM)</span> :
+                                        <span style={{ color: '#dc3545', fontWeight: 'bold' }}>DEMO (Limit 100 KB)</span>
                                     }
                                 </h3>
-                                
+
                                 {!isFullVersion && (
-                                    <div className="license-unlock-area" style={{marginTop: '15px', padding: '15px', background: '#f8f9fa', borderRadius: '5px'}}>
+                                    <div className="license-unlock-area" style={{ marginTop: '15px', padding: '15px', background: '#f8f9fa', borderRadius: '5px' }}>
                                         <p>
                                             Program jest w wersji DEMO. Aby wgrywać większe pliki, wprowadź klucz.
                                         </p>
-                                        <p style={{fontSize: '0.85em', color: '#6c757d', fontStyle: 'italic'}}>
-                                            Podpowiedź: Szyfr Cezara (przesunięcie +3). Hasło wynikowe to STUDENT.<br/>
+                                        <p style={{ fontSize: '0.85em', color: '#6c757d', fontStyle: 'italic' }}>
+                                            Podpowiedź: Szyfr Cezara (przesunięcie +3). Hasło wynikowe to STUDENT.<br />
                                             Wpisz zaszyfrowane hasło: <strong>VWXGHQW</strong>
                                         </p>
-                                        
-                                        <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
-                                            <input 
-                                                type="text" 
-                                                placeholder="Wprowadź klucz licencji..." 
+
+                                        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                                            <input
+                                                type="text"
+                                                placeholder="Wprowadź klucz licencji..."
                                                 value={unlockKey}
                                                 onChange={(e) => setUnlockKey(e.target.value)}
                                                 className="form-control"
-                                                style={{flex: 1, padding: '8px', border: '1px solid #ced4da', borderRadius: '4px'}}
+                                                style={{ flex: 1, padding: '8px', border: '1px solid #ced4da', borderRadius: '4px' }}
                                             />
-                                            <button 
+                                            <button
                                                 onClick={handleUnlock}
                                                 className="btn-primary"
-                                                style={{padding: '8px 20px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                                style={{ padding: '8px 20px', background: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                                             >
                                                 Odblokuj
                                             </button>
@@ -263,47 +273,46 @@ const UserPanel = () => {
                                 )}
                             </div>
 
-                            {/* UPLOAD PLIKÓW */}
                             <div className="profile-info-card">
                                 <h3>Wgraj nowy plik</h3>
-                                <div style={{marginTop: '15px'}}>
-                                    <div style={{display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px'}}>
-                                        <input 
+                                <div style={{ marginTop: '15px' }}>
+                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
+                                        <input
                                             id="fileInput"
-                                            type="file" 
+                                            type="file"
                                             onChange={(e) => setSelectedFile(e.target.files[0])}
-                                            style={{flex: 1}} 
+                                            style={{ flex: 1 }}
                                         />
-                                        <button 
+                                        <button
                                             onClick={handleFileUpload}
                                             disabled={!selectedFile}
                                             style={{
-                                                padding: '8px 20px', 
-                                                background: selectedFile ? '#28a745' : '#6c757d', 
-                                                color: 'white', 
-                                                border: 'none', 
-                                                borderRadius: '4px', 
+                                                padding: '8px 20px',
+                                                background: selectedFile ? '#28a745' : '#6c757d',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: '4px',
                                                 cursor: selectedFile ? 'pointer' : 'not-allowed'
                                             }}
                                         >
                                             Wyślij na serwer
                                         </button>
                                     </div>
-                                    
+
                                     {selectedFile && (
-                                        <div style={{fontSize: '0.9em', color: '#666', marginBottom: '10px'}}>
+                                        <div style={{ fontSize: '0.9em', color: '#666', marginBottom: '10px' }}>
                                             Wybrany plik: <strong>{selectedFile.name}</strong> ({(selectedFile.size / 1024).toFixed(2)} KB)
                                         </div>
                                     )}
 
                                     {uploadStatus && (
                                         <div className={`alert ${uploadStatus.startsWith('Sukces') ? 'alert-success' : 'alert-error'}`}
-                                             style={{
-                                                 padding: '10px', 
-                                                 background: uploadStatus.startsWith('Sukces') ? '#d4edda' : '#f8d7da', 
-                                                 color: uploadStatus.startsWith('Sukces') ? '#155724' : '#721c24',
-                                                 borderRadius: '4px'
-                                             }}>
+                                            style={{
+                                                padding: '10px',
+                                                background: uploadStatus.startsWith('Sukces') ? '#d4edda' : '#f8d7da',
+                                                color: uploadStatus.startsWith('Sukces') ? '#155724' : '#721c24',
+                                                borderRadius: '4px'
+                                            }}>
                                             {uploadStatus}
                                         </div>
                                     )}
